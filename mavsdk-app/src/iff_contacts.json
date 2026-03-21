@@ -1,0 +1,12 @@
+{
+    "contacts": [
+        {"callsign": "Eagle-1", "type": "aircraft", "classification": "FRIENDLY"},
+        {"callsign": "Falcon-2", "type": "aircraft", "classification": "FRIENDLY"},
+        {"callsign": "Viper-3", "type": "aircraft", "classification": "HOSTILE"},
+        {"callsign": "Raven-4", "type": "drone", "classification": "FRIENDLY"},
+        {"callsign": "Shadow-5", "type": "drone", "classification": "HOSTILE"},
+        {"callsign": "Cobra-6", "type": "ground_vehicle", "classification": "HOSTILE"},
+        {"callsign": "Ghost-7", "type": "ground_vehicle", "classification": "UNKNOWN"},
+        {"callsign": "Hawk-8", "type": "aircraft", "classification": "UNKNOWN"}
+    ]
+}
