@@ -78,15 +78,26 @@ def choose_safe_altitude(
     start_alt: float,
     goal_alt: float,
     threats: List[ThreatZone],
+    start_x: float = 0.0, start_y: float = 0.0,
+    goal_x: float = 0.0, goal_y: float = 0.0,
 ) -> float:
     """
-    Choose the minimum altitude that clears every finite-ceiling threat zone.
-    Zones with alt_ceil=inf are always blocked regardless of altitude and must
-    be navigated around, not over.
+    Choose the minimum altitude that clears finite-ceiling threat zones
+    that are actually near the flight corridor.  Only bumps altitude for
+    zones whose centre is within (radius + corridor_margin) of the
+    start→goal line segment.  Zones with alt_ceil=inf must be navigated
+    around, not over.
     """
     alt = max(start_alt, goal_alt)
+    corridor_margin = 30.0  # metres — how close a zone must be to matter
     for t in threats:
-        if t.alt_ceil != float("inf"):
+        if t.alt_ceil == float("inf"):
+            continue
+        # Only bump altitude if this zone is near the flight corridor
+        if segment_intersects_circle(
+            start_x, start_y, goal_x, goal_y,
+            t.x, t.y, t.radius + corridor_margin,
+        ):
             alt = max(alt, t.alt_ceil + ALT_MARGIN)
     return alt
 
@@ -238,9 +249,17 @@ def ara_star(
           - eps_achieved is the suboptimality bound of the returned path
             (path_cost ≤ eps_achieved × optimal_cost)
     """
+    # Clear risk cache from any previous planning call
+    global _risk_cache, _risk_cache_alt
+    _risk_cache = {}
+    _risk_cache_alt = -999.0
+
     sg = _w2g(start_x, start_y)
     gg = _w2g(goal_x, goal_y)
-    alt = choose_safe_altitude(start_alt, goal_alt, threats)
+    alt = choose_safe_altitude(
+        start_alt, goal_alt, threats,
+        start_x, start_y, goal_x, goal_y,
+    )
 
     deadline = time.monotonic() + time_budget
     best_path: Optional[list] = None
@@ -260,6 +279,12 @@ def ara_star(
             best_eps = eps
 
         eps = round(eps - EPS_STEP, 6)
+
+    if best_path is not None and len(best_path) >= 2:
+        # Replace first and last waypoints with exact coordinates
+        # (grid quantization shifts them by up to GRID_RES/2)
+        best_path[0] = (start_x, start_y, alt)
+        best_path[-1] = (goal_x, goal_y, alt)
 
     return best_path, best_eps
 
@@ -394,7 +419,10 @@ def plan_path(
         PlanResult with found=True and a smoothed waypoint list on success,
         or found=False with empty waypoints if no path exists.
     """
-    safe_alt = choose_safe_altitude(start_alt, goal_alt, threats)
+    safe_alt = choose_safe_altitude(
+        start_alt, goal_alt, threats,
+        start_x, start_y, goal_x, goal_y,
+    )
 
     path, eps = ara_star(
         start_x, start_y, start_alt,
