@@ -3,7 +3,7 @@ transcriber.py — transcribe audio locally using faster-whisper.
 
 Runs the Whisper model on-device; no API key or internet connection required
 after the first run. The model weights are downloaded once and cached in
-~/.cache/huggingface/hub/ (or %USERPROFILE%\.cache\huggingface\hub on Windows).
+~/.cache/huggingface/hub/ (or %USERPROFILE%\\.cache\\huggingface\\hub on Windows).
 
 Model size guide (set via WHISPER_MODEL env var or model_size arg):
     tiny   ~75 MB   fastest, least accurate

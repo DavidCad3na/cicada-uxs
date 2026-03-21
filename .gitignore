@@ -2,6 +2,8 @@
 ardupilot/
 ardupilot_gazebo/
 venv/
+AGENTS.md
+CLAUDE.md
 terrain/
 __pycache__/
 *.pyc
