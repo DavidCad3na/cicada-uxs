@@ -28,12 +28,12 @@ export default function VoiceInput({ onCommand, isProcessing }: VoiceInputProps)
       const recorder = new MediaRecorder(stream);
       chunksRef.current = [];
 
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunksRef.current.push(event.data);
       };
 
       recorder.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
+        stream.getTracks().forEach((track) => track.stop());
         const blob = new Blob(chunksRef.current, { type: "audio/webm" });
         setTranscript("Processing...");
         try {
@@ -76,15 +76,15 @@ export default function VoiceInput({ onCommand, isProcessing }: VoiceInputProps)
 
   // Spacebar push-to-talk
   useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.code === "Space" && (document.activeElement as HTMLElement)?.tagName !== "INPUT") {
-        e.preventDefault();
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.code === "Space" && (document.activeElement as HTMLElement)?.tagName !== "INPUT") {
+        event.preventDefault();
         startRecording();
       }
     }
-    function onKeyUp(e: KeyboardEvent) {
-      if (e.code === "Space" && (document.activeElement as HTMLElement)?.tagName !== "INPUT") {
-        e.preventDefault();
+    function onKeyUp(event: KeyboardEvent) {
+      if (event.code === "Space" && (document.activeElement as HTMLElement)?.tagName !== "INPUT") {
+        event.preventDefault();
         stopRecording();
       }
     }
@@ -126,8 +126,8 @@ export default function VoiceInput({ onCommand, isProcessing }: VoiceInputProps)
       <input
         type="text"
         value={textInput}
-        onChange={(e) => setTextInput(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && sendText()}
+        onChange={(event) => setTextInput(event.target.value)}
+        onKeyDown={(event) => event.key === "Enter" && sendText()}
         placeholder="Type command and press Enter or Send..."
         disabled={isProcessing}
         className="flex-1 bg-transparent border border-zinc-700 text-sm text-zinc-200 placeholder-zinc-600 outline-none px-3 py-2 focus:border-zinc-400 disabled:opacity-40"

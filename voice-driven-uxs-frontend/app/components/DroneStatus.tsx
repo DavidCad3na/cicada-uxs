@@ -24,20 +24,20 @@ export default function DroneStatus({ drone, onArmedChange, onConnectedChange }:
   const [telem, setTelem] = useState<Telemetry | null>(null);
 
   useEffect(() => {
-    const es = new EventSource(`/api/telemetry/${drone}`);
+    const eventSource = new EventSource(`/api/telemetry/${drone}`);
 
-    es.onmessage = (e) => {
-      const data: Telemetry = JSON.parse(e.data);
+    eventSource.onmessage = (event) => {
+      const data: Telemetry = JSON.parse(event.data);
       setTelem(data);
       onArmedChange?.(data.armed);
       onConnectedChange?.(data.connected);
     };
 
-    es.onerror = () => {
+    eventSource.onerror = () => {
       onConnectedChange?.(false);
     };
 
-    return () => es.close();
+    return () => eventSource.close();
   }, [drone, onArmedChange, onConnectedChange]);
 
   const rows = telem
