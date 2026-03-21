@@ -1,0 +1,14 @@
+.obsidian/
+ardupilot/
+ardupilot_gazebo/
+venv/
+terrain/
+__pycache__/
+*.pyc
+*.pem
+*.ova
+eeprom.bin
+logs/
+score_*.json
+telemetry_*.jsonl
+challenge/evaluation_commands.txt
