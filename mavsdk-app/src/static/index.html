@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Drone Operations Command Center</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+    <h1>Voice Drone Operations Command Center</h1>
+    <div class="connection-status">
+        <div class="processing" id="processing">
+            <div class="spinner"></div>
+            <span>Processing...</span>
+        </div>
+        <span class="status-dot" id="statusDot"></span>
+        <span id="connectionText">Disconnected</span>
+        <button class="connect-btn" id="connectBtn" onclick="connectDrone()">Connect</button>
+    </div>
+</div>
+
+<!-- Main 3-panel layout -->
+<div class="main-layout">
+
+    <!-- Left: Status Panel -->
+    <div class="status-panel">
+        <h2>Drone Status</h2>
+        <div class="status-item">
+            <span class="label">Mode</span>
+            <span class="value" id="sMode">—</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Armed</span>
+            <span class="value" id="sArmed">—</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Altitude</span>
+            <span class="value" id="sAlt">—</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Position X</span>
+            <span class="value" id="sPosX">—</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Position Y</span>
+            <span class="value" id="sPosY">—</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Heading</span>
+            <span class="value" id="sHeading">—</span>
+        </div>
+        <div class="status-item">
+            <span class="label">Battery</span>
+            <span class="value" id="sBattery">—</span>
+        </div>
+        <div class="status-item">
+            <span class="label">GPS</span>
+            <span class="value" id="sGPS">—</span>
+        </div>
+
+        <h2 style="margin-top: 20px;">Drone ID</h2>
+        <div class="status-item">
+            <span class="label">Callsign</span>
+            <span class="value" id="sDroneId">Alpha</span>
+        </div>
+    </div>
+
+    <!-- Center: Map -->
+    <div class="map-container">
+        <canvas id="mapCanvas"></canvas>
+        <div class="map-legend">
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #22c55e;"></div>
+                <span>Drone</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #ef4444;"></div>
+                <span>No-Go</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #f59e0b;"></div>
+                <span>Waypoint</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #3b82f6; opacity: 0.4;"></div>
+                <span>Trail</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right: Command Log -->
+    <div class="command-log">
+        <h2>Command Log</h2>
+        <div class="log-entries" id="logEntries">
+            <div class="log-entry" style="border-left-color: var(--accent-cyan);">
+                <div class="log-time">System</div>
+                <div class="log-text">Voice Drone Ops ready. Connect to SITL to begin.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bottom: Input Bar -->
+    <div class="input-bar">
+        <button class="mic-btn" id="micBtn" title="Push to talk (or press Space)">
+            &#x1F3A4;
+        </button>
+        <span class="transcript-display" id="transcript"></span>
+        <input type="text" class="text-input" id="textInput"
+               placeholder="Type a command or use the mic..."
+               autocomplete="off">
+        <button class="send-btn" id="sendBtn" onclick="sendTextCommand()">Send</button>
+    </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
