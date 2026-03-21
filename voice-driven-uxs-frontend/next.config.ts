@@ -10,5 +10,15 @@ const nextConfig: NextConfig = {
       { source: "/api/:path*", destination: `${backendUrl}/api/:path*` },
     ];
   },
+  webpack(config, { isServer }) {
+    if (!isServer) {
+      config.experiments = {
+        ...config.experiments,
+        asyncWebAssembly: true,
+        layers: true,
+      };
+    }
+    return config;
+  },
 };
 export default nextConfig;

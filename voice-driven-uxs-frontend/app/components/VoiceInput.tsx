@@ -1,11 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { RnnoiseWorkletNode, loadRnnoise } from "@sapphi-red/web-noise-suppressor";
 
 interface VoiceInputProps {
   onCommand: (text: string) => void;
   isProcessing: boolean;
 }
+
+// RNNoise assets are copied from node_modules to public/rnnoise/ at dev/build time
+// (see scripts/copy-audio-assets.js)
+const WORKLET_URL  = "/rnnoise/workletProcessor.js";
+const WASM_URL     = "/rnnoise/rnnoise.wasm";
+const WASM_SIMD_URL = "/rnnoise/rnnoise_simd.wasm";
 
 export default function VoiceInput({ onCommand, isProcessing }: VoiceInputProps) {
   const [isListening, setIsListening] = useState(false);
@@ -17,26 +24,94 @@ export default function VoiceInput({ onCommand, isProcessing }: VoiceInputProps)
   const isListeningRef = useRef(false);
   const pendingStopRef = useRef(false);
 
+  // RNNoise state — initialized once, reused across recordings
+  const wasmBinaryRef = useRef<ArrayBuffer | null>(null);
+  const workletLoadedRef = useRef(false);
+  const rnnoiseReadyRef = useRef<boolean | null>(null); // null=untried, true/false=result
+
   // Keep ref in sync so keyup handler sees current value
   useEffect(() => {
     isListeningRef.current = isListening;
   }, [isListening]);
 
+  async function initRnnoise(audioCtx: AudioContext): Promise<boolean> {
+    if (rnnoiseReadyRef.current !== null) return rnnoiseReadyRef.current;
+
+    try {
+      // Load WASM binary once and cache it
+      if (!wasmBinaryRef.current) {
+        wasmBinaryRef.current = await loadRnnoise({ url: WASM_URL, simdUrl: WASM_SIMD_URL });
+      }
+
+      // Register AudioWorklet processor once per AudioContext
+      if (!workletLoadedRef.current) {
+        await audioCtx.audioWorklet.addModule(WORKLET_URL);
+        workletLoadedRef.current = true;
+      }
+
+      rnnoiseReadyRef.current = true;
+      return true;
+    } catch (err) {
+      console.warn("[RNNoise] Init failed, falling back to raw audio:", err);
+      rnnoiseReadyRef.current = false;
+      return false;
+    }
+  }
+
   async function startRecording() {
     if (isListeningRef.current || isProcessing) return;
     isListeningRef.current = true;
     pendingStopRef.current = false;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      // User released space before getUserMedia resolved — abort immediately
+    try {
+      // Disable browser-native suppression so RNNoise handles it
+      const rawStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
+
+      // User released before getUserMedia resolved — abort
       if (pendingStopRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
+        rawStream.getTracks().forEach((t) => t.stop());
         isListeningRef.current = false;
         return;
       }
 
-      const recorder = new MediaRecorder(stream);
+      let recordingStream: MediaStream = rawStream;
+      let audioCtx: AudioContext | null = null;
+      let denoiser: RnnoiseWorkletNode | null = null;
+
+      try {
+        // RNNoise requires 48 kHz
+        audioCtx = new AudioContext({ sampleRate: 48000 });
+        await audioCtx.resume();
+
+        const ready = await initRnnoise(audioCtx);
+        if (ready && wasmBinaryRef.current) {
+          const source = audioCtx.createMediaStreamSource(rawStream);
+          const destination = audioCtx.createMediaStreamDestination();
+
+          denoiser = new RnnoiseWorkletNode(audioCtx, {
+            maxChannels: 1,
+            wasmBinary: wasmBinaryRef.current,
+          });
+
+          source.connect(denoiser);
+          denoiser.connect(destination);
+          recordingStream = destination.stream;
+        }
+      } catch (err) {
+        console.warn("[RNNoise] Audio graph setup failed, using raw audio:", err);
+        audioCtx?.close();
+        audioCtx = null;
+        denoiser = null;
+        recordingStream = rawStream;
+      }
+
+      const recorder = new MediaRecorder(recordingStream);
       chunksRef.current = [];
 
       recorder.ondataavailable = (event) => {
@@ -44,7 +119,13 @@ export default function VoiceInput({ onCommand, isProcessing }: VoiceInputProps)
       };
 
       recorder.onstop = async () => {
-        stream.getTracks().forEach((track) => track.stop());
+        rawStream.getTracks().forEach((t) => t.stop());
+
+        // Cleanup audio graph
+        denoiser?.destroy();
+        denoiser?.disconnect();
+        await audioCtx?.close().catch(() => {});
+
         const blob = new Blob(chunksRef.current, { type: "audio/webm" });
         setTranscript("Processing...");
         try {
@@ -77,7 +158,7 @@ export default function VoiceInput({ onCommand, isProcessing }: VoiceInputProps)
 
   function stopRecording() {
     if (!isListeningRef.current) return;
-    pendingStopRef.current = true; // signal abort even if recorder isn't ready yet
+    pendingStopRef.current = true;
     mediaRecorderRef.current?.stop();
     setIsListening(false);
   }
@@ -91,7 +172,7 @@ export default function VoiceInput({ onCommand, isProcessing }: VoiceInputProps)
   // Spacebar push-to-talk
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.repeat) return; // ignore key-hold repeats
+      if (event.repeat) return;
       if (event.code === "Space" && (document.activeElement as HTMLElement)?.tagName !== "INPUT") {
         event.preventDefault();
         startRecording();
