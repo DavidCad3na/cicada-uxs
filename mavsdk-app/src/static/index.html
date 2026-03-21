@@ -9,6 +9,18 @@
 <body data-armed="false">
 <div class="shell">
 
+    <!-- Confirmation Modal Overlay -->
+    <div class="confirm-overlay" id="confirmOverlay">
+        <div class="confirm-box">
+            <div class="confirm-title" id="confirmTitle">CONFIRM ACTION</div>
+            <div class="confirm-body" id="confirmBody"></div>
+            <div class="confirm-buttons">
+                <button class="confirm-btn confirm-yes" id="confirmYes">CONFIRM</button>
+                <button class="confirm-btn confirm-no" id="confirmNo">CANCEL</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Header -->
     <nav class="header">
         <div class="header-left">
@@ -39,7 +51,9 @@
             </div>
             <div class="log-entries" id="logEntries">
                 <div class="log-entry system">
-                    <div class="log-time">SYSTEM</div>
+                    <div class="log-header">
+                        <span class="log-time">SYSTEM</span>
+                    </div>
                     <div class="log-text">UxS C2 ready. Awaiting connection.</div>
                 </div>
             </div>
@@ -108,31 +122,38 @@
                 </div>
                 <div class="status-item">
                     <span class="label">Mode</span>
-                    <span class="value" id="sMode">—</span>
+                    <span class="value" id="sMode">&mdash;</span>
                 </div>
                 <div class="status-item">
                     <span class="label">Alt</span>
-                    <span class="value" id="sAlt">—</span>
+                    <span class="value" id="sAlt">&mdash;</span>
                 </div>
                 <div class="status-item">
                     <span class="label">Pos X</span>
-                    <span class="value" id="sPosX">—</span>
+                    <span class="value" id="sPosX">&mdash;</span>
                 </div>
                 <div class="status-item">
                     <span class="label">Pos Y</span>
-                    <span class="value" id="sPosY">—</span>
+                    <span class="value" id="sPosY">&mdash;</span>
                 </div>
                 <div class="status-item">
                     <span class="label">Hdg</span>
-                    <span class="value" id="sHeading">—</span>
+                    <span class="value" id="sHeading">&mdash;</span>
                 </div>
                 <div class="status-item">
                     <span class="label">Bat</span>
-                    <span class="value" id="sBattery">—</span>
+                    <span class="value" id="sBattery">&mdash;</span>
+                </div>
+                <div class="battery-bar-container">
+                    <div class="battery-bar" id="sBatteryBar" style="width:100%"></div>
                 </div>
                 <div class="status-item">
                     <span class="label">GPS</span>
-                    <span class="value" id="sGPS">—</span>
+                    <span class="value" id="sGPS">&mdash;</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">Lat/Lon</span>
+                    <span class="value" id="sLatLon">&mdash;</span>
                 </div>
             </div>
 
@@ -146,32 +167,48 @@
                 </div>
                 <div class="status-item">
                     <span class="label">Mode</span>
-                    <span class="value" id="bMode">—</span>
+                    <span class="value" id="bMode">&mdash;</span>
                 </div>
                 <div class="status-item">
                     <span class="label">Alt</span>
-                    <span class="value" id="bAlt">—</span>
+                    <span class="value" id="bAlt">&mdash;</span>
                 </div>
                 <div class="status-item">
                     <span class="label">Pos X</span>
-                    <span class="value" id="bPosX">—</span>
+                    <span class="value" id="bPosX">&mdash;</span>
                 </div>
                 <div class="status-item">
                     <span class="label">Pos Y</span>
-                    <span class="value" id="bPosY">—</span>
+                    <span class="value" id="bPosY">&mdash;</span>
                 </div>
                 <div class="status-item">
                     <span class="label">Hdg</span>
-                    <span class="value" id="bHeading">—</span>
+                    <span class="value" id="bHeading">&mdash;</span>
                 </div>
                 <div class="status-item">
                     <span class="label">Bat</span>
-                    <span class="value" id="bBattery">—</span>
+                    <span class="value" id="bBattery">&mdash;</span>
+                </div>
+                <div class="battery-bar-container">
+                    <div class="battery-bar" id="bBatteryBar" style="width:100%"></div>
                 </div>
                 <div class="status-item">
                     <span class="label">GPS</span>
-                    <span class="value" id="bGPS">—</span>
+                    <span class="value" id="bGPS">&mdash;</span>
                 </div>
+                <div class="status-item">
+                    <span class="label">Lat/Lon</span>
+                    <span class="value" id="bLatLon">&mdash;</span>
+                </div>
+            </div>
+
+            <!-- Landmarks & Waypoints Reference -->
+            <div class="landmarks-panel">
+                <div class="landmarks-header" onclick="toggleLandmarks()">
+                    <span class="section-icon landmarks-chevron" id="landmarksChevron">&#9654;</span>
+                    <h3>Landmarks &amp; Waypoints</h3>
+                </div>
+                <div class="landmarks-list" id="landmarksList"></div>
             </div>
         </aside>
 
@@ -180,7 +217,7 @@
     <!-- Bottom: CMD bar -->
     <div class="cmd-bar">
         <span class="cmd-prefix">CMD&gt;</span>
-        <!-- Drone selector — determines which drone receives the command -->
+        <!-- Drone selector -->
         <div class="drone-selector">
             <button class="selector-btn active" id="selectorAlpha" onclick="setActiveDrone('Alpha')" title="Send to Alpha">&#945;</button>
             <button class="selector-btn" id="selectorBravo" onclick="setActiveDrone('Bravo')" title="Send to Bravo">&#946;</button>

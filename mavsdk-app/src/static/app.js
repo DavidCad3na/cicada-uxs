@@ -9,11 +9,20 @@ let isProcessing = false;
 let mapZoom      = 1.0;
 const MAX_TRAIL  = 200;
 
-// Per-drone telemetry + render state
+// Pending entries awaiting confirmation resolution
+const pendingEntries = new Map();  // id -> DOM element
+let pendingCounter = 0;
+
+// Active confirmation state
+let pendingConfirmation = null;  // { text, droneId, entryId, resolve }
+
+// ── Per-drone telemetry + render state ───────────────────────────────────
+
 const DRONE = {
     Alpha: {
         pos:        { x: -40, y: 0, alt: 0 },
         state:      { armed: false, mode: 'UNKNOWN', battery: 100 },
+        gps:        { lat: null, lon: null, fix: false },
         trail:      [],
         color:      '#22c55e',
         glowStart:  'rgba(34,197,94,0.3)',
@@ -25,6 +34,7 @@ const DRONE = {
     Bravo: {
         pos:        { x: -40, y: 5, alt: 0 },
         state:      { armed: false, mode: 'UNKNOWN', battery: 100 },
+        gps:        { lat: null, lon: null, fix: false },
         trail:      [],
         color:      '#38bdf8',
         glowStart:  'rgba(56,189,248,0.3)',
@@ -71,6 +81,11 @@ const textInput     = document.getElementById('textInput');
 const logEntries    = document.getElementById('logEntries');
 const transcriptEl  = document.getElementById('transcript');
 const processingEl  = document.getElementById('processing');
+const confirmOverlay = document.getElementById('confirmOverlay');
+const confirmTitle   = document.getElementById('confirmTitle');
+const confirmBody    = document.getElementById('confirmBody');
+const confirmYes     = document.getElementById('confirmYes');
+const confirmNo      = document.getElementById('confirmNo');
 
 // ── Timestamp (live clock in header) ─────────────────────────────────────
 
@@ -205,7 +220,7 @@ function drawMap() {
 
         switch (loc.type) {
             case 'hostile':   color = '#ef4444'; dotSize = 5; square = true; break;
-            case 'unknown':   color = '#a78bfa'; dotSize = 5; square = true; break;
+            case 'unknown':   color = '#fbbf24'; dotSize = 5; square = true; break;
             case 'danger':    color = '#ef4444'; dotSize = 4; break;
             case 'caution':   color = '#f59e0b'; dotSize = 4; break;
             case 'structure': color = '#64748b'; dotSize = 3; break;
@@ -298,6 +313,11 @@ function startTelemetry(droneId) {
                 mode:    data.mode    || 'UNKNOWN',
                 battery: data.battery != null ? data.battery : 100,
             };
+            drone.gps = {
+                lat: data.lat != null ? data.lat : null,
+                lon: data.lon != null ? data.lon : null,
+                fix: data.gps_fix || false,
+            };
 
             drone.trail.push({ x: drone.pos.x, y: drone.pos.y });
             if (drone.trail.length > MAX_TRAIL) drone.trail.shift();
@@ -317,16 +337,33 @@ function updateStatusPanel(data, droneId) {
     el('Alt').textContent     = (data.alt     || 0).toFixed(1) + 'm';
     el('PosX').textContent    = (data.x       || 0).toFixed(1);
     el('PosY').textContent    = (data.y       || 0).toFixed(1);
-    el('Heading').textContent = (data.heading || 0).toFixed(0) + '°';
+    el('Heading').textContent = (data.heading || 0).toFixed(0) + '\u00b0';
 
     const battery = data.battery != null ? data.battery : 100;
     const batEl   = el('Battery');
     batEl.textContent = battery + '%';
-    batEl.className   = 'value' + (battery < 30 ? ' danger' : battery < 60 ? ' warning' : '');
+    batEl.className   = 'value' + (battery < 20 ? ' danger' : battery < 50 ? ' warning' : '');
+
+    // Battery progress bar
+    const barEl = document.getElementById(p + 'BatteryBar');
+    if (barEl) {
+        barEl.style.width = battery + '%';
+        barEl.className = 'battery-bar' + (battery < 20 ? ' danger' : battery < 50 ? ' warning' : '');
+    }
 
     const gpsEl = el('GPS');
     gpsEl.textContent = data.gps_fix ? 'FIX' : 'NO FIX';
     gpsEl.className   = 'value' + (data.gps_fix ? '' : ' danger');
+
+    // Lat/Lon display
+    const latLonEl = el('LatLon');
+    if (latLonEl) {
+        if (data.lat != null && data.lon != null) {
+            latLonEl.textContent = data.lat.toFixed(6) + ', ' + data.lon.toFixed(6);
+        } else {
+            latLonEl.textContent = '—';
+        }
+    }
 }
 
 // ── Connection ────────────────────────────────────────────────────────────
@@ -338,7 +375,6 @@ async function connectDrone(droneId) {
     btn.textContent = 'CONNECTING...';
 
     try {
-        // Alpha = SITL instance 0 (sysid 1), Bravo = instance 1 (sysid 2)
         const sysid = droneId === 'Alpha' ? 1 : 2;
         const resp = await fetch('/api/connect', {
             method:  'POST',
@@ -349,7 +385,7 @@ async function connectDrone(droneId) {
 
         if (data.status === 'connected') {
             connectedDrones.add(droneId);
-            btn.textContent = '● ' + droneId.toUpperCase();
+            btn.textContent = '\u25cf ' + droneId.toUpperCase();
             btn.classList.add('connected');
 
             const badgeId = droneId === 'Alpha' ? 'badgeAlphaConnected' : 'badgeBravoConnected';
@@ -358,17 +394,17 @@ async function connectDrone(droneId) {
             badge.classList.add('connected');
 
             updateSysTag();
-            addLogEntry('system', 'Connected — ' + droneId.toUpperCase(), '');
+            addLogEntry({ status: 'system', text: 'Connected \u2014 ' + droneId.toUpperCase() });
             startTelemetry(droneId);
         } else {
             btn.textContent = droneId.toUpperCase();
             btn.disabled    = false;
-            addLogEntry('error', 'Failed to connect ' + droneId + ': ' + (data.message || 'Unknown error'), '');
+            addLogEntry({ status: 'error', text: 'Failed to connect ' + droneId + ': ' + (data.message || 'Unknown error') });
         }
     } catch (err) {
         btn.textContent = droneId.toUpperCase();
         btn.disabled    = false;
-        addLogEntry('error', 'Connection error (' + droneId + '): ' + err.message, '');
+        addLogEntry({ status: 'error', text: 'Connection error (' + droneId + '): ' + err.message });
     }
 }
 
@@ -380,30 +416,218 @@ function setActiveDrone(droneId) {
     document.getElementById('selectorBravo').classList.toggle('active', droneId === 'Bravo');
 }
 
+// ── Confirmation Modal ───────────────────────────────────────────────────
+
+function showConfirmation(message, detail) {
+    return new Promise((resolve) => {
+        confirmTitle.textContent = 'CONFIRM ACTION';
+        confirmBody.innerHTML = escapeHtml(message) +
+            (detail ? '<span class="confirm-target">' + escapeHtml(detail) + '</span>' : '');
+        confirmOverlay.classList.add('active');
+
+        const cleanup = () => {
+            confirmOverlay.classList.remove('active');
+            confirmYes.removeEventListener('click', onConfirm);
+            confirmNo.removeEventListener('click', onCancel);
+            document.removeEventListener('keydown', onKey);
+        };
+
+        const onConfirm = () => { cleanup(); resolve(true); };
+        const onCancel  = () => { cleanup(); resolve(false); };
+        const onKey = (e) => {
+            if (e.key === 'Enter') onConfirm();
+            else if (e.key === 'Escape') onCancel();
+        };
+
+        confirmYes.addEventListener('click', onConfirm);
+        confirmNo.addEventListener('click', onCancel);
+        document.addEventListener('keydown', onKey);
+    });
+}
+
 // ── Command Submission ────────────────────────────────────────────────────
 
-async function sendCommand(text) {
-    if (!text.trim() || isProcessing) return;
+async function sendCommand(rawText) {
+    if (!rawText.trim() || isProcessing) return;
 
     isProcessing = true;
     processingEl.classList.add('active');
+
+    const trimmed = rawText.trim();
 
     try {
         const resp = await fetch('/api/command', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ text: text.trim(), drone_id: activeDroneId }),
+            body:    JSON.stringify({ text: trimmed, drone_id: activeDroneId }),
         });
-        const data   = await resp.json();
+        const data = await resp.json();
         const status = data.status || 'unknown';
-        addLogEntry(status, '[' + activeDroneId + '] ' + text.trim(), data.feedback || data.reason || '');
+
+        // Map backend statuses to our display statuses
+        const entryData = {
+            rawTranscript: trimmed,
+            parsedAction:  data.parsed_action || data.action || null,
+            droneId:       activeDroneId,
+            feedback:      data.feedback || '',
+            reason:        data.reason || '',
+            safetyDecision: data.safety_decision || data.iff_status || null,
+            target:        data.target || null,
+            resolvedGps:   data.resolved_gps || null,
+        };
+
+        // Handle different response statuses
+        if (status === 'confirm_required' || status === 'confirmation_required') {
+            // Show as pending, then prompt confirmation
+            const entryId = addLogEntry({
+                status: 'pending',
+                badge: 'PENDING',
+                ...entryData,
+            });
+
+            isProcessing = false;
+            processingEl.classList.remove('active');
+
+            const confirmMsg = data.confirm_message || 'Confirm action on ' + (data.target || 'target') + '?';
+            const confirmed = await showConfirmation(confirmMsg, data.target || entryData.parsedAction);
+
+            if (confirmed) {
+                // Re-send with confirmed flag
+                isProcessing = true;
+                processingEl.classList.add('active');
+
+                try {
+                    const confirmResp = await fetch('/api/command', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text: trimmed, drone_id: activeDroneId, confirmed: true }),
+                    });
+                    const confirmData = await confirmResp.json();
+                    updatePendingEntry(entryId, confirmData.status === 'approved' ? 'approved' : (confirmData.status || 'approved'), 'EXECUTED',
+                        confirmData.feedback || 'Confirmed and executed');
+                    if (confirmData.feedback) speak(confirmData.feedback);
+                } catch (err) {
+                    updatePendingEntry(entryId, 'error', 'ERROR', 'Confirmation failed: ' + err.message);
+                }
+
+                isProcessing = false;
+                processingEl.classList.remove('active');
+            } else {
+                updatePendingEntry(entryId, 'cancelled', 'CANCELLED', 'Action cancelled by operator');
+            }
+            return;
+
+        } else if (status === 'approved' || status === 'executed') {
+            addLogEntry({ status: 'approved', badge: 'EXECUTED', ...entryData });
+
+        } else if (status === 'rejected' || status === 'blocked') {
+            addLogEntry({ status: 'blocked', badge: 'BLOCKED', ...entryData });
+
+        } else if (status === 'not_supported') {
+            addLogEntry({
+                status: 'not_supported',
+                badge: 'NOT SUPPORTED',
+                ...entryData,
+                feedback: data.feedback || 'Command not supported',
+            });
+
+        } else if (status === 'not_found') {
+            addLogEntry({
+                status: 'not_found',
+                badge: 'NOT FOUND',
+                ...entryData,
+                feedback: data.feedback || 'Location not found',
+            });
+
+        } else if (status === 'iff_unknown') {
+            // Unknown IFF — needs confirmation
+            const entryId = addLogEntry({
+                status: 'pending',
+                badge: 'PENDING',
+                ...entryData,
+                safetyDecision: 'UNKNOWN — NOT IN IFF DATABASE',
+            });
+
+            isProcessing = false;
+            processingEl.classList.remove('active');
+
+            const confirmed = await showConfirmation(
+                'Target not in IFF database. Proceed with action?',
+                data.target || entryData.parsedAction
+            );
+
+            if (confirmed) {
+                isProcessing = true;
+                processingEl.classList.add('active');
+                try {
+                    const confirmResp = await fetch('/api/command', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text: trimmed, drone_id: activeDroneId, confirmed: true }),
+                    });
+                    const confirmData = await confirmResp.json();
+                    updatePendingEntry(entryId, 'approved', 'EXECUTED', confirmData.feedback || 'Confirmed and executed');
+                    if (confirmData.feedback) speak(confirmData.feedback);
+                } catch (err) {
+                    updatePendingEntry(entryId, 'error', 'ERROR', 'Error: ' + err.message);
+                }
+                isProcessing = false;
+                processingEl.classList.remove('active');
+            } else {
+                updatePendingEntry(entryId, 'cancelled', 'CANCELLED', 'Action cancelled by operator');
+            }
+            return;
+
+        } else if (status === 'parse_error' || status === 'parse_fail') {
+            addLogEntry({
+                status: 'parse_fail',
+                badge: 'PARSE FAIL',
+                rawTranscript: trimmed,
+                parsedAction: null,
+                droneId: activeDroneId,
+                feedback: data.feedback || 'Could not parse speech input',
+            });
+
+        } else if (status === 'query' || status === 'telemetry_response') {
+            addLogEntry({
+                status: 'query',
+                badge: 'QUERY',
+                ...entryData,
+                feedback: data.feedback || data.response || '',
+            });
+
+        } else {
+            // Default fallback
+            addLogEntry({ status: status, badge: mapStatusToBadge(status), ...entryData });
+        }
+
         if (data.feedback) speak(data.feedback);
+
     } catch (err) {
-        addLogEntry('error', text.trim(), 'Error: ' + err.message);
+        addLogEntry({
+            status: 'error',
+            badge: 'ERROR',
+            rawTranscript: trimmed,
+            droneId: activeDroneId,
+            feedback: 'Error: ' + err.message,
+        });
     }
 
     isProcessing = false;
     processingEl.classList.remove('active');
+}
+
+function mapStatusToBadge(status) {
+    const map = {
+        approved: 'EXECUTED', executed: 'EXECUTED', executing: 'EXECUTING',
+        rejected: 'BLOCKED', blocked: 'BLOCKED',
+        error: 'ERROR', system: '',
+        pending: 'PENDING', cancelled: 'CANCELLED',
+        query: 'QUERY', telemetry_response: 'QUERY',
+        not_supported: 'NOT SUPPORTED', not_found: 'NOT FOUND',
+        parse_fail: 'PARSE FAIL', parse_error: 'PARSE FAIL',
+    };
+    return map[status] || status.toUpperCase();
 }
 
 function sendTextCommand() {
@@ -423,16 +647,116 @@ textInput.addEventListener('keydown', (event) => {
 
 // ── Command Log ───────────────────────────────────────────────────────────
 
-function addLogEntry(status, text, feedback) {
+function addLogEntry(opts) {
+    // opts: { status, badge, rawTranscript, parsedAction, droneId, feedback, reason, safetyDecision, target, text, resolvedGps }
     const entry = document.createElement('div');
-    entry.className = 'log-entry ' + status;
+    const statusClass = (opts.status || 'system').replace(/\s+/g, '_');
+    entry.className = 'log-entry ' + statusClass;
+
+    const entryId = 'log-' + (++pendingCounter);
+    entry.id = entryId;
+
     const time = new Date().toISOString().slice(11, 19) + 'Z';
-    entry.innerHTML =
-        '<div class="log-time">'     + time              + '</div>' +
-        '<div class="log-text">'     + escapeHtml(text)  + '</div>' +
-        (feedback ? '<div class="log-feedback">' + escapeHtml(feedback) + '</div>' : '');
+    const badge = opts.badge || '';
+    const badgeClass = badgeToCssClass(badge);
+
+    let html = '<div class="log-header">' +
+        '<span class="log-time">' + time + (opts.droneId ? ' [' + opts.droneId + ']' : '') + '</span>' +
+        (badge ? '<span class="result-badge ' + badgeClass + '">' + escapeHtml(badge) + '</span>' : '') +
+        '</div>';
+
+    // Simple system/error entries with just text
+    if (opts.text && !opts.rawTranscript) {
+        html += '<div class="log-text">' + escapeHtml(opts.text) + '</div>';
+    } else {
+        // Raw transcript (always shown)
+        if (opts.rawTranscript) {
+            html += '<div class="log-raw"><span class="raw-label">STT:</span>' + escapeHtml(opts.rawTranscript) + '</div>';
+        }
+        // Parsed action (shown below raw if different)
+        if (opts.parsedAction && opts.parsedAction !== opts.rawTranscript) {
+            html += '<div class="log-text">' + escapeHtml(opts.parsedAction) + '</div>';
+        }
+    }
+
+    // Safety decision
+    if (opts.safetyDecision) {
+        const iffClass = getIffClass(opts.safetyDecision);
+        html += '<div class="log-safety ' + iffClass + '">IFF: ' + escapeHtml(opts.safetyDecision) + '</div>';
+    }
+
+    // Blocked reason
+    if (opts.reason) {
+        html += '<div class="log-reason">' + escapeHtml(opts.reason) + '</div>';
+    }
+
+    // Resolved GPS
+    if (opts.resolvedGps) {
+        html += '<div class="log-feedback">GPS: ' + escapeHtml(opts.resolvedGps) + '</div>';
+    }
+
+    // Feedback
+    if (opts.feedback) {
+        html += '<div class="log-feedback">' + escapeHtml(opts.feedback) + '</div>';
+    }
+
+    entry.innerHTML = html;
     logEntries.appendChild(entry);
     logEntries.scrollTop = logEntries.scrollHeight;
+
+    // Track pending entries
+    if (opts.status === 'pending') {
+        pendingEntries.set(entryId, entry);
+    }
+
+    return entryId;
+}
+
+function updatePendingEntry(entryId, newStatus, newBadge, newFeedback) {
+    const entry = document.getElementById(entryId);
+    if (!entry) return;
+
+    // Update status class
+    entry.className = 'log-entry ' + newStatus;
+
+    // Update badge
+    const badgeEl = entry.querySelector('.result-badge');
+    if (badgeEl) {
+        badgeEl.textContent = newBadge;
+        badgeEl.className = 'result-badge ' + badgeToCssClass(newBadge);
+    }
+
+    // Update or add feedback
+    let feedbackEl = entry.querySelector('.log-feedback');
+    if (newFeedback) {
+        if (!feedbackEl) {
+            feedbackEl = document.createElement('div');
+            feedbackEl.className = 'log-feedback';
+            entry.appendChild(feedbackEl);
+        }
+        feedbackEl.textContent = newFeedback;
+    }
+
+    pendingEntries.delete(entryId);
+    logEntries.scrollTop = logEntries.scrollHeight;
+}
+
+function badgeToCssClass(badge) {
+    const map = {
+        'EXECUTED': 'executed', 'BLOCKED': 'blocked', 'PENDING': 'pending',
+        'CANCELLED': 'cancelled', 'ERROR': 'error', 'QUERY': 'query',
+        'NOT SUPPORTED': 'not-supported', 'NOT FOUND': 'not-found',
+        'PARSE FAIL': 'parse-fail', 'EXECUTING': 'executed',
+    };
+    return map[badge] || 'error';
+}
+
+function getIffClass(decision) {
+    const d = decision.toUpperCase();
+    if (d.includes('FRIENDLY') || d.includes('CLEAR') || d.includes('ALLOWED'))  return 'iff-friendly';
+    if (d.includes('HOSTILE')  || d.includes('BLOCKED') || d.includes('DENIED')) return 'iff-blocked';
+    if (d.includes('UNKNOWN')  || d.includes('UNRECOGNIZED'))                    return 'iff-unknown';
+    return 'iff-hostile';
 }
 
 function escapeHtml(text) {
@@ -442,10 +766,6 @@ function escapeHtml(text) {
 }
 
 // ── Whisper Voice Input (server-side) ─────────────────────────────────────
-
-function clearTranscriptAfter(ms) {
-    setTimeout(() => { transcriptEl.textContent = ''; }, ms);
-}
 
 async function startMicHold() {
     if (isListening || isProcessing) return;
@@ -459,17 +779,15 @@ async function startMicHold() {
         const data = await resp.json();
 
         if (data.status === 'ok' && data.text) {
+            // Persist last transcript — do not auto-clear
             transcriptEl.textContent = data.text;
             await sendCommand(data.text);
-            clearTranscriptAfter(2000);
         } else {
             transcriptEl.textContent = data.message || 'No speech detected.';
-            clearTranscriptAfter(3000);
         }
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
         transcriptEl.textContent = 'Mic error: ' + message;
-        clearTranscriptAfter(3000);
     } finally {
         isListening = false;
         micBtn.classList.remove('listening');
@@ -531,8 +849,32 @@ function speak(text) {
     }
 }
 
+// ── Landmarks Panel ──────────────────────────────────────────────────────
+
+function toggleLandmarks() {
+    const list = document.getElementById('landmarksList');
+    const chevron = document.getElementById('landmarksChevron');
+    list.classList.toggle('open');
+    chevron.classList.toggle('open');
+}
+
+function populateLandmarks() {
+    const list = document.getElementById('landmarksList');
+    if (!list) return;
+    list.innerHTML = '';
+    for (const loc of LOCATIONS) {
+        const div = document.createElement('div');
+        div.className = 'landmark-entry';
+        div.innerHTML =
+            '<span class="lm-name">' + escapeHtml(loc.name) + '</span>' +
+            '<span class="lm-type ' + loc.type + '">' + loc.type.toUpperCase() + '</span>';
+        list.appendChild(div);
+    }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────
 
 window.addEventListener('resize', () => { resizeCanvas(); drawMap(); });
 resizeCanvas();
 drawMap();
+populateLandmarks();

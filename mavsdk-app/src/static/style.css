@@ -195,34 +195,110 @@ html, body {
 }
 
 .log-entry {
-    border-left: 2px solid var(--border);
-    padding: 4px 0 4px 12px;
+    border-left: 3px solid var(--border);
+    padding: 6px 0 6px 12px;
 }
-.log-entry.approved  { border-left-color: #22c55e; }
-.log-entry.rejected  { border-left-color: #ef4444; }
-.log-entry.error     { border-left-color: #7f1d1d; }
-.log-entry.system    { border-left-color: #52525b; }
-.log-entry.executing { border-left-color: #3b82f6; }
+.log-entry.approved   { border-left-color: #22c55e; }
+.log-entry.rejected   { border-left-color: #ef4444; }
+.log-entry.blocked    { border-left-color: #ef4444; }
+.log-entry.error      { border-left-color: #7f1d1d; }
+.log-entry.system     { border-left-color: #52525b; }
+.log-entry.executing  { border-left-color: #3b82f6; }
+.log-entry.pending    { border-left-color: #f59e0b; }
+.log-entry.cancelled  { border-left-color: #71717a; }
+.log-entry.query      { border-left-color: #38bdf8; }
+.log-entry.not_supported { border-left-color: #71717a; }
+.log-entry.not_found  { border-left-color: #71717a; }
+.log-entry.iff_unknown_entry { border-left-color: #a78bfa; }
+.log-entry.parse_fail { border-left-color: #7f1d1d; }
+
+/* Log header row: time + badge */
+.log-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+}
 
 .log-time {
     font-size: 13px;
     color: #3f3f46;
 }
+
+/* Result badges */
+.result-badge {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    flex-shrink: 0;
+}
+.result-badge.executed  { background: #14532d; color: #4ade80; }
+.result-badge.blocked   { background: #450a0a; color: #f87171; }
+.result-badge.pending   { background: #78350f; color: #fbbf24; }
+.result-badge.cancelled { background: #27272a; color: #71717a; }
+.result-badge.error     { background: #450a0a; color: #dc2626; }
+.result-badge.query     { background: #1e3a5f; color: #38bdf8; }
+.result-badge.not-supported { background: #27272a; color: #a1a1aa; }
+.result-badge.not-found     { background: #27272a; color: #a1a1aa; }
+.result-badge.iff-warning   { background: #2e1065; color: #c4b5fd; }
+.result-badge.parse-fail    { background: #450a0a; color: #f87171; }
+
+/* Raw transcript line */
+.log-raw {
+    font-size: 13px;
+    color: #71717a;
+    margin-bottom: 2px;
+}
+.log-raw .raw-label {
+    font-size: 11px;
+    color: #52525b;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-right: 6px;
+}
+
+/* Parsed action line */
 .log-text {
-    font-size: 16px;
+    font-size: 15px;
     color: #e4e4e7;
     margin-top: 2px;
 }
-.log-feedback {
-    font-size: 16px;
-    font-style: italic;
+
+/* Safety decision line */
+.log-safety {
+    font-size: 13px;
+    margin-top: 3px;
+    font-weight: 600;
+}
+.log-safety.iff-friendly { color: #4ade80; }
+.log-safety.iff-hostile  { color: #f87171; }
+.log-safety.iff-unknown  { color: #fbbf24; }
+.log-safety.iff-blocked  { color: #f87171; }
+
+/* Blocked reason */
+.log-reason {
+    font-size: 13px;
+    color: #f87171;
     margin-top: 2px;
+    font-style: italic;
+}
+
+/* Feedback line */
+.log-feedback {
+    font-size: 14px;
+    font-style: italic;
+    margin-top: 3px;
     color: #71717a;
 }
 .log-entry.approved  .log-feedback { color: #4ade80; }
-.log-entry.rejected  .log-feedback { color: #f87171; }
+.log-entry.rejected  .log-feedback,
+.log-entry.blocked   .log-feedback { color: #f87171; }
 .log-entry.error     .log-feedback { color: #dc2626; }
 .log-entry.executing .log-feedback { color: #60a5fa; }
+.log-entry.query     .log-feedback { color: #38bdf8; }
 
 /* ── Center: Map ── */
 .map-section {
@@ -306,7 +382,7 @@ html, body {
 }
 .unknown-dot {
     width: 8px; height: 8px;
-    background: #a78bfa;
+    background: #fbbf24;
     border-radius: 0;
     flex-shrink: 0;
 }
@@ -387,6 +463,162 @@ html, body {
 .status-item .value.warning { color: #fbbf24; }
 .status-item .value.danger  { color: #f87171; }
 
+/* Battery progress bar */
+.battery-bar-container {
+    width: 100%;
+    height: 6px;
+    background: #27272a;
+    margin: 2px 0 6px 0;
+    overflow: hidden;
+}
+.battery-bar {
+    height: 100%;
+    background: #22c55e;
+    transition: width 0.5s ease, background 0.3s;
+}
+.battery-bar.warning { background: #fbbf24; }
+.battery-bar.danger  { background: #ef4444; }
+
+/* ── Landmarks / Waypoints Panel ── */
+.landmarks-panel {
+    margin: 0 12px 12px 12px;
+    border: 1px solid var(--border);
+}
+.landmarks-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+    user-select: none;
+}
+.landmarks-header:hover { background: rgba(255,255,255,0.03); }
+.landmarks-header h3 {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--color-dim);
+}
+.landmarks-chevron {
+    transition: transform 0.2s;
+}
+.landmarks-chevron.open {
+    transform: rotate(90deg);
+}
+.landmarks-list {
+    display: none;
+    padding: 0 12px 8px 12px;
+}
+.landmarks-list.open { display: block; }
+.landmark-entry {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 3px 0;
+    font-size: 12px;
+}
+.landmark-entry .lm-name { color: #a1a1aa; }
+.landmark-entry .lm-type {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 1px 5px;
+}
+.landmark-entry .lm-type.waypoint  { color: #f59e0b; background: rgba(245,158,11,0.1); }
+.landmark-entry .lm-type.structure { color: #64748b; background: rgba(100,116,139,0.1); }
+.landmark-entry .lm-type.hostile   { color: #f87171; background: rgba(239,68,68,0.1); }
+.landmark-entry .lm-type.unknown   { color: #fbbf24; background: rgba(251,191,36,0.1); }
+.landmark-entry .lm-type.danger    { color: #f87171; background: rgba(239,68,68,0.1); }
+.landmark-entry .lm-type.caution   { color: #f59e0b; background: rgba(245,158,11,0.1); }
+
+/* ── Confirmation Modal ── */
+.confirm-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.7);
+    align-items: center;
+    justify-content: center;
+}
+.confirm-overlay.active {
+    display: flex;
+}
+.confirm-box {
+    background: #1a1400;
+    border: 3px solid #f59e0b;
+    padding: 32px 40px;
+    max-width: 560px;
+    width: 90%;
+    box-shadow: 0 0 60px rgba(245, 158, 11, 0.3), 0 0 120px rgba(245, 158, 11, 0.1);
+    animation: confirmPulse 2s ease-in-out infinite;
+}
+@keyframes confirmPulse {
+    0%, 100% { box-shadow: 0 0 60px rgba(245, 158, 11, 0.3), 0 0 120px rgba(245, 158, 11, 0.1); }
+    50%      { box-shadow: 0 0 80px rgba(245, 158, 11, 0.5), 0 0 160px rgba(245, 158, 11, 0.15); }
+}
+.confirm-title {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: #fbbf24;
+    text-align: center;
+    margin-bottom: 20px;
+}
+.confirm-body {
+    font-size: 17px;
+    color: #fcd34d;
+    text-align: center;
+    line-height: 1.6;
+    margin-bottom: 28px;
+}
+.confirm-body .confirm-target {
+    font-weight: 700;
+    font-size: 20px;
+    display: block;
+    margin: 8px 0;
+}
+.confirm-body .confirm-action {
+    color: #f59e0b;
+}
+.confirm-buttons {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+}
+.confirm-btn {
+    font-family: inherit;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    padding: 12px 32px;
+    border: 2px solid;
+    cursor: pointer;
+    transition: all 0.15s;
+    min-width: 140px;
+}
+.confirm-yes {
+    border-color: #f59e0b;
+    background: #78350f;
+    color: #fbbf24;
+}
+.confirm-yes:hover {
+    background: #92400e;
+    box-shadow: 0 0 20px rgba(245, 158, 11, 0.3);
+}
+.confirm-no {
+    border-color: #52525b;
+    background: transparent;
+    color: #a1a1aa;
+}
+.confirm-no:hover {
+    background: #27272a;
+    border-color: #71717a;
+}
+
 /* ── Bottom CMD bar ── */
 .cmd-bar {
     display: flex;
@@ -398,7 +630,7 @@ html, body {
     flex-shrink: 0;
 }
 
-/* ── Drone selector (α / β toggle in CMD bar) ── */
+/* ── Drone selector (a / b toggle in CMD bar) ── */
 .drone-selector {
     display: flex;
     border: 1px solid #3f3f46;
