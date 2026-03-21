@@ -209,8 +209,8 @@ def _fallback_parse_single(text: str) -> dict:
         "southwest tower", "southwest watch tower", "sw tower",
         "command building", "command center",
         "rooftop", "roof",
-        "barracks 1", "barracks 2", "north barracks", "south barracks",
-        "motor pool", "containers", "shipping containers",
+        "barracks 1", "barracks 2", "north barracks", "south barracks", "barracks",
+        "motor pool", "container", "containers", "shipping containers",
         "comms tower", "communications tower", "comm tower",
         "fuel depot",
     ]
@@ -219,9 +219,15 @@ def _fallback_parse_single(text: str) -> dict:
         if loc in t:
             return {"action": "goto", "location": loc, "altitude": alt}
 
-    # Generic goto with altitude
-    if any(w in t for w in ["fly to", "go to", "head to", "return to", "head back", "go back"]):
-        return {"action": "goto", "location": t, "altitude": alt}
+    # Generic goto with altitude — strip verb prefixes so the location
+    # resolver sees a clean name (e.g. "barracks" not "go to barracks")
+    _goto_prefixes = ["fly to", "go to", "head to", "return to",
+                      "head back to", "go back to", "head back", "go back"]
+    for pfx in _goto_prefixes:
+        if t.startswith(pfx):
+            loc = t[len(pfx):].strip().rstrip(",")
+            if loc:
+                return {"action": "goto", "location": loc, "altitude": alt}
 
     # Default: try to interpret as goto
     return {"action": "goto", "location": t, "altitude": alt}
