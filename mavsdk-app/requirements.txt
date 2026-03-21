@@ -1,1 +1,5 @@
 pymavlink>=2.4.40
+flask>=3.0
+groq>=0.4
+python-dotenv>=1.0
+pyttsx3>=2.90

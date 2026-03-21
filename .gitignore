@@ -12,3 +12,5 @@ logs/
 score_*.json
 telemetry_*.jsonl
 challenge/evaluation_commands.txt
+/context
+.env
