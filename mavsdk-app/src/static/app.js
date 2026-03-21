@@ -377,12 +377,12 @@ function escapeHtml(text) {
 
 // ── Whisper Voice Input (server-side) ─────────────────────────────────────
 
-async function toggleMic() {
-    if (isListening) {
-        transcriptEl.textContent = 'Stopping...';
-        await fetch('/api/listen/stop', { method: 'POST' });
-        return;
-    }
+function clearTranscriptAfter(ms) {
+    setTimeout(() => { transcriptEl.textContent = ''; }, ms);
+}
+
+async function startMicHold() {
+    if (isListening || isProcessing) return;
 
     isListening = true;
     micBtn.classList.add('listening');
@@ -395,26 +395,60 @@ async function toggleMic() {
         if (data.status === 'ok' && data.text) {
             transcriptEl.textContent = data.text;
             await sendCommand(data.text);
-            setTimeout(() => { transcriptEl.textContent = ''; }, 2000);
+            clearTranscriptAfter(2000);
         } else {
             transcriptEl.textContent = data.message || 'No speech detected.';
-            setTimeout(() => { transcriptEl.textContent = ''; }, 3000);
+            clearTranscriptAfter(3000);
         }
     } catch (error) {
-        transcriptEl.textContent = 'Mic error: ' + error.message;
-        setTimeout(() => { transcriptEl.textContent = ''; }, 3000);
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        transcriptEl.textContent = 'Mic error: ' + message;
+        clearTranscriptAfter(3000);
     } finally {
         isListening = false;
         micBtn.classList.remove('listening');
     }
 }
 
-micBtn.addEventListener('click', toggleMic);
+async function stopMicHold() {
+    if (!isListening) return;
+    transcriptEl.textContent = 'Stopping...';
+    try {
+        await fetch('/api/listen/stop', { method: 'POST' });
+    } catch {
+        // UI will recover when /api/listen resolves
+    }
+}
+
+micBtn.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    startMicHold();
+});
+
+micBtn.addEventListener('pointerup', (event) => {
+    event.preventDefault();
+    stopMicHold();
+});
+
+micBtn.addEventListener('pointerleave', () => {
+    stopMicHold();
+});
+
+micBtn.addEventListener('pointercancel', () => {
+    stopMicHold();
+});
 
 document.addEventListener('keydown', (event) => {
     if (event.code === 'Space' && document.activeElement !== textInput && !event.repeat) {
         event.preventDefault();
-        toggleMic();
+        startMicHold();
+    }
+});
+
+document.addEventListener('keyup', (event) => {
+    if (event.code === 'Space' && document.activeElement !== textInput) {
+        event.preventDefault();
+        stopMicHold();
     }
 });
 

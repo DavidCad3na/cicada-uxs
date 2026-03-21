@@ -15,6 +15,7 @@ export default function VoiceInput({ onCommand, isProcessing }: VoiceInputProps)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const isListeningRef = useRef(false);
+  const pendingStopRef = useRef(false);
 
   // Keep ref in sync so keyup handler sees current value
   useEffect(() => {
@@ -23,8 +24,18 @@ export default function VoiceInput({ onCommand, isProcessing }: VoiceInputProps)
 
   async function startRecording() {
     if (isListeningRef.current || isProcessing) return;
+    isListeningRef.current = true;
+    pendingStopRef.current = false;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      // User released space before getUserMedia resolved — abort immediately
+      if (pendingStopRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        isListeningRef.current = false;
+        return;
+      }
+
       const recorder = new MediaRecorder(stream);
       chunksRef.current = [];
 
@@ -57,6 +68,8 @@ export default function VoiceInput({ onCommand, isProcessing }: VoiceInputProps)
       setIsListening(true);
       setTranscript("Listening...");
     } catch {
+      isListeningRef.current = false;
+      pendingStopRef.current = false;
       setTranscript("Mic unavailable");
       setTimeout(() => setTranscript(""), 2000);
     }
@@ -64,6 +77,7 @@ export default function VoiceInput({ onCommand, isProcessing }: VoiceInputProps)
 
   function stopRecording() {
     if (!isListeningRef.current) return;
+    pendingStopRef.current = true; // signal abort even if recorder isn't ready yet
     mediaRecorderRef.current?.stop();
     setIsListening(false);
   }
@@ -77,6 +91,7 @@ export default function VoiceInput({ onCommand, isProcessing }: VoiceInputProps)
   // Spacebar push-to-talk
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
+      if (event.repeat) return; // ignore key-hold repeats
       if (event.code === "Space" && (document.activeElement as HTMLElement)?.tagName !== "INPUT") {
         event.preventDefault();
         startRecording();
@@ -101,9 +116,8 @@ export default function VoiceInput({ onCommand, isProcessing }: VoiceInputProps)
 
       {/* Mic button — hold to record */}
       <button
-        onMouseDown={startRecording}
-        onMouseUp={stopRecording}
-        onMouseLeave={stopRecording}
+        onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); startRecording(); }}
+        onPointerUp={(e) => { e.currentTarget.releasePointerCapture(e.pointerId); stopRecording(); }}
         disabled={isProcessing}
         title="Hold to talk (or hold Space)"
         className={`w-10 h-10 shrink-0 rounded-full border text-sm flex items-center justify-center transition-all disabled:opacity-40 ${
