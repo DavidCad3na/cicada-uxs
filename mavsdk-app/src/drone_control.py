@@ -18,9 +18,8 @@ from challenge.config import (
     PYMAVLINK_CONNECTION, latlon_to_local, local_to_latlon, distance_2d,
 )
 
-# Drone spawns at Landing Pad — ENU (-40, 0) relative to compound center
-HOME_ENU_X = -40.0
-HOME_ENU_Y = 0.0
+# SITL HOME is at compound center (0, 0) per launch_sitl.sh -l flag.
+# LOCAL_NED origin = compound center, so ENU coords map directly to NED.
 
 
 @dataclass
@@ -42,7 +41,7 @@ class DroneController:
         self._running = False
 
         # Current state (updated by telemetry thread)
-        self._position = {"x": HOME_ENU_X, "y": HOME_ENU_Y, "alt": 0.0,
+        self._position = {"x": -40.0, "y": 0.0, "alt": 0.0,
                           "lat": 0.0, "lon": 0.0, "heading": 0.0}
         self._state = {"armed": False, "mode": "UNKNOWN", "battery": 100,
                        "gps_fix": False, "connected": False}
@@ -167,10 +166,10 @@ class DroneController:
 
     @staticmethod
     def enu_to_ned(target_x_enu: float, target_y_enu: float, altitude: float):
-        """Convert compound ENU target to NED relative to home (landing pad)."""
-        north = target_y_enu - HOME_ENU_Y
-        east = target_x_enu - HOME_ENU_X
-        down = -altitude
+        """Convert compound ENU target to NED. Origin = compound center for both frames."""
+        north = target_y_enu   # ENU y = NED north
+        east = target_x_enu    # ENU x = NED east
+        down = -altitude        # NED down = negative altitude
         return north, east, down
 
     # ── Commands ────────────────────────────────────────────────────────
@@ -184,6 +183,30 @@ class DroneController:
                 0b0000111111111000,  # position only
                 north, east, down,
                 0, 0, 0, 0, 0, 0, 0, 0)
+
+    def _set_yaw_toward(self, target_x_enu: float, target_y_enu: float):
+        """Command the drone to face toward a target ENU position."""
+        pos = self.get_position()
+        dx = target_x_enu - pos["x"]
+        dy = target_y_enu - pos["y"]
+        if abs(dx) < 0.5 and abs(dy) < 0.5:
+            return  # too close, skip yaw
+        # atan2 gives angle from East axis; convert to compass heading (from North, CW)
+        heading_deg = (90.0 - math.degrees(math.atan2(dy, dx))) % 360.0
+        with self._lock:
+            self.mav.mav.command_long_send(
+                self.mav.target_system, self.mav.target_component,
+                mavutil.mavlink.MAV_CMD_CONDITION_YAW,
+                0,
+                heading_deg,  # target heading in degrees
+                25,           # degrees/sec rotation speed
+                1,            # 1 = clockwise, -1 = counter-clockwise
+                0,            # 0 = absolute angle
+                0, 0, 0)
+
+    def _wait_for_arrival(self, timeout: float = 60.0) -> bool:
+        """Block until the drone reaches the current target or timeout."""
+        return self._target_reached.wait(timeout=timeout)
 
     def takeoff(self, altitude: float = 10.0) -> CommandResult:
         """Arm, set GUIDED mode, and take off to altitude."""
@@ -218,9 +241,14 @@ class DroneController:
         except Exception as e:
             return CommandResult(False, f"Takeoff failed: {e}", "takeoff")
 
-    def goto_location(self, x_enu: float, y_enu: float, altitude: float) -> CommandResult:
+    def goto_location(self, x_enu: float, y_enu: float, altitude: float,
+                      wait: bool = False) -> CommandResult:
         """Fly to absolute ENU coordinates at given altitude."""
         try:
+            # Point the nose toward the target
+            self._set_yaw_toward(x_enu, y_enu)
+            time.sleep(0.3)
+
             north, east, down = self.enu_to_ned(x_enu, y_enu, altitude)
             self._send_goto_ned(north, east, down)
 
@@ -234,13 +262,36 @@ class DroneController:
                 daemon=True
             ).start()
 
+            if wait:
+                self._wait_for_arrival(timeout=120)
+
             return CommandResult(
                 True,
-                f"Flying to ({x_enu}, {y_enu}) at {altitude}m",
+                f"Flying to ({x_enu:.1f}, {y_enu:.1f}) at {altitude:.0f}m",
                 "goto"
             )
         except Exception as e:
             return CommandResult(False, f"Goto failed: {e}", "goto")
+
+    def fly_waypoints(self, waypoints: list) -> CommandResult:
+        """
+        Fly through a sequence of (x, y, alt) waypoints, waiting for
+        arrival at each before proceeding to the next.
+        """
+        if not waypoints:
+            return CommandResult(False, "No waypoints provided", "waypoints")
+
+        for i, (wx, wy, walt) in enumerate(waypoints):
+            result = self.goto_location(wx, wy, walt, wait=True)
+            if not result.success:
+                result.message = f"Waypoint {i+1}/{len(waypoints)} failed: {result.message}"
+                return result
+
+        return CommandResult(
+            True,
+            f"Completed {len(waypoints)}-waypoint route",
+            "waypoints"
+        )
 
     def goto_relative(self, direction: str, distance: float,
                       altitude: Optional[float] = None) -> CommandResult:
