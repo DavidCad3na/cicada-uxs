@@ -1,50 +1,91 @@
 "use client";
 
 import { useState } from "react";
-import CommandLog from "./components/CommandLog";
+import CommandLog, { LogEntry } from "./components/CommandLog";
 import DroneStatus from "./components/DroneStatus";
 import VoiceInput from "./components/VoiceInput";
 import ConfirmationModal from "./components/ConfirmationModal";
 
 const THEMES = {
   armed: {
-    root:        "bg-[#0c0a00] text-amber-400",
-    nav:         "border-amber-900 bg-[#110e00]",
-    sysTag:      "text-amber-600",
-    heading:     "text-amber-300",
-    timestamp:   "text-amber-800",
+    root:         "bg-[#0c0a00] text-amber-400",
+    nav:          "border-amber-900 bg-[#110e00]",
+    sysTag:       "text-amber-600",
+    heading:      "text-amber-300",
+    timestamp:    "text-amber-800",
     sectionBorder:"border-amber-900",
-    sectionIcon: "text-amber-600",
-    sectionLabel:"text-amber-600",
-    sidebar:     "border-amber-900 bg-[#110e00]",
-    dronePanel:  "border-amber-900",
-    droneLabel:  "text-amber-300",
-    activeBadge: "bg-amber-900 text-amber-300",
+    sectionIcon:  "text-amber-600",
+    sectionLabel: "text-amber-600",
+    sidebar:      "border-amber-900 bg-[#110e00]",
+    dronePanel:   "border-amber-900",
+    droneLabel:   "text-amber-300",
+    activeBadge:  "bg-amber-900 text-amber-300",
   },
   disarmed: {
-    root:        "bg-[#0a0f0a] text-lime-400",
-    nav:         "border-lime-900 bg-[#0d140d]",
-    sysTag:      "text-lime-600",
-    heading:     "text-lime-300",
-    timestamp:   "text-lime-900",
+    root:         "bg-[#0a0f0a] text-lime-400",
+    nav:          "border-lime-900 bg-[#0d140d]",
+    sysTag:       "text-lime-600",
+    heading:      "text-lime-300",
+    timestamp:    "text-lime-900",
     sectionBorder:"border-lime-900",
-    sectionIcon: "text-lime-600",
-    sectionLabel:"text-lime-600",
-    sidebar:     "border-lime-900 bg-[#0d140d]",
-    dronePanel:  "border-lime-900",
-    droneLabel:  "text-lime-300",
-    activeBadge: "bg-lime-900 text-lime-300",
+    sectionIcon:  "text-lime-600",
+    sectionLabel: "text-lime-600",
+    sidebar:      "border-lime-900 bg-[#0d140d]",
+    dronePanel:   "border-lime-900",
+    droneLabel:   "text-lime-300",
+    activeBadge:  "bg-lime-900 text-lime-300",
   },
 };
+
+let nextId = 0;
+
+function speak(text: string) {
+  if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.05;
+    utterance.pitch = 0.95;
+    utterance.volume = 0.9;
+    window.speechSynthesis.speak(utterance);
+  }
+}
 
 export default function Home() {
   const [alphaArmed, setAlphaArmed] = useState(false);
   const [bravoArmed, setBravoArmed] = useState(false);
   const [alphaConnected, setAlphaConnected] = useState(false);
   const [bravoConnected, setBravoConnected] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([
+    { id: nextId++, time: "SYSTEM", status: "system", text: "UxS C2 ready. Awaiting connection." },
+  ]);
 
   const isArmed = alphaArmed || bravoArmed;
   const t = isArmed ? THEMES.armed : THEMES.disarmed;
+
+  function addLogEntry(status: LogEntry["status"], text: string, feedback?: string) {
+    const time = new Date().toISOString().slice(11, 19) + "Z";
+    setLogEntries((prev) => [...prev, { id: nextId++, time, status, text, feedback }]);
+  }
+
+  async function sendCommand(text: string) {
+    if (!text.trim() || isProcessing) return;
+    setIsProcessing(true);
+    try {
+      const resp = await fetch("/api/command", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: text.trim() }),
+      });
+      const data = await resp.json();
+      addLogEntry(data.status ?? "unknown", text.trim(), data.feedback ?? data.reason);
+      if (data.feedback) speak(data.feedback);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      addLogEntry("error", text.trim(), `Error: ${msg}`);
+    }
+    setIsProcessing(false);
+  }
 
   return (
     <div className={`flex flex-col h-screen font-mono ${t.root}`}>
@@ -57,12 +98,9 @@ export default function Home() {
             UxS Command &amp; Control
           </h1>
         </div>
-        <div className="flex items-center gap-4">
-          <span className={`text-xs tracking-widest uppercase ${t.timestamp}`}>
-            {new Date().toISOString().replace("T", " ").slice(0, 19)}Z
-          </span>
-          <VoiceInput />
-        </div>
+        <span className={`text-xs tracking-widest uppercase ${t.timestamp}`}>
+          {new Date().toISOString().replace("T", " ").slice(0, 19)}Z
+        </span>
       </nav>
 
       {/* Main layout */}
@@ -76,7 +114,7 @@ export default function Home() {
               Command Log // Voice Transcript
             </h2>
           </div>
-          <CommandLog />
+          <CommandLog entries={logEntries} isProcessing={isProcessing} />
         </main>
 
         {/* Right: Drone Status Sidebar */}
@@ -103,7 +141,11 @@ export default function Home() {
                 </span>
               </div>
             </div>
-            <DroneStatus onArmedChange={setAlphaArmed} onConnectedChange={setAlphaConnected} />
+            <DroneStatus
+              drone="alpha"
+              onArmedChange={setAlphaArmed}
+              onConnectedChange={setAlphaConnected}
+            />
           </div>
 
           {/* Bravo */}
@@ -121,9 +163,19 @@ export default function Home() {
                 </span>
               </div>
             </div>
-            <DroneStatus onArmedChange={setBravoArmed} onConnectedChange={setBravoConnected} />
+            <DroneStatus
+              drone="bravo"
+              onArmedChange={setBravoArmed}
+              onConnectedChange={setBravoConnected}
+            />
           </div>
         </aside>
+      </div>
+
+      {/* Bottom command bar */}
+      <div className={`flex items-center gap-3 px-6 py-3 border-t ${t.nav}`}>
+        <span className={`text-xs uppercase tracking-widest shrink-0 ${t.sectionLabel}`}>CMD&gt;</span>
+        <VoiceInput onCommand={sendCommand} isProcessing={isProcessing} />
       </div>
 
       {/* Confirmation Modal (overlay) */}
