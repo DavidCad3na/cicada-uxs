@@ -32,7 +32,189 @@ voice = VoiceFeedback(use_server_tts=False)
 # Global drone controller (initialized on connect)
 drone: DroneController | None = None
 command_log: list[dict] = []
-_listen_stop = threading.Event()  # set this to abort an active recording
+_listen_stop = threading.Event()
+
+# ── Command Queue State ──────────────────────────────────────────────────
+
+_queue_cancel = threading.Event()
+_queue_thread: threading.Thread | None = None
+_queue_status: dict = {"state": "idle", "total": 0, "current": 0, "commands": []}
+_queue_lock = threading.Lock()
+
+
+def _set_queue_status(**kwargs):
+    with _queue_lock:
+        _queue_status.update(kwargs)
+
+
+def _cancel_active_queue():
+    """Signal any running queue to stop after its current command."""
+    global _queue_thread
+    _queue_cancel.set()
+    if _queue_thread and _queue_thread.is_alive():
+        _queue_thread.join(timeout=5)
+    _queue_thread = None
+    _queue_cancel.clear()
+
+
+# ── Single-Intent Processing ─────────────────────────────────────────────
+
+_DIRECTION_MAP = {
+    "north": (0, 1), "south": (0, -1),
+    "east": (1, 0), "west": (-1, 0),
+    "northeast": (0.707, 0.707), "northwest": (-0.707, 0.707),
+    "southeast": (0.707, -0.707), "southwest": (-0.707, -0.707),
+}
+
+
+def _process_single_intent(intent: dict, ctrl: DroneController,
+                           wait_for_move: bool = False) -> dict:
+    """Run one intent through resolve → validate → execute.
+
+    Returns a log-entry dict. When *wait_for_move* is True, goto/move
+    commands block until the drone arrives (used by the queue worker).
+    """
+    timestamp = datetime.now().isoformat()
+    action = intent.get("action", "")
+
+    # Resolve named location
+    if action == "goto" and "location" in intent:
+        loc = resolve_location(intent["location"])
+        if loc:
+            intent["x"] = loc.x
+            intent["y"] = loc.y
+            if intent.get("altitude") is None:
+                intent["altitude"] = loc.default_alt
+            intent["resolved_name"] = loc.name
+        else:
+            entry = {
+                "timestamp": timestamp, "intent": _clean_intent(intent),
+                "status": "rejected",
+                "reason": f"Unknown location: {intent['location']}",
+                "feedback": f"Unknown location: {intent['location']}. Please specify a known compound location.",
+            }
+            command_log.append(entry)
+            return entry
+
+    # Compute relative target coords
+    if action == "move_relative":
+        pos = ctrl.get_position()
+        d = intent.get("direction", "north").lower()
+        dx, dy = _DIRECTION_MAP.get(d, (0, 0))
+        dist = intent.get("distance", 0)
+        intent["x"] = pos["x"] + dx * dist
+        intent["y"] = pos["y"] + dy * dist
+        if intent.get("altitude") is None:
+            intent["altitude"] = pos["alt"]
+
+    if action == "change_altitude":
+        pos = ctrl.get_position()
+        intent["x"] = pos["x"]
+        intent["y"] = pos["y"]
+
+    # Validate
+    current_pos = ctrl.get_position()
+    validation = validate(intent, current_pos)
+
+    entry: dict = {
+        "timestamp": timestamp,
+        "intent": _clean_intent(intent),
+        "status": "approved" if validation.approved else "rejected",
+        "reason": validation.reason,
+    }
+    if validation.waypoints:
+        entry["rerouted"] = True
+        entry["waypoint_count"] = len(validation.waypoints)
+        entry["path_quality"] = validation.path_quality
+
+    if not validation.approved:
+        entry["feedback"] = voice.generate_feedback("rejected", intent, reason=validation.reason)
+        entry["suggestion"] = validation.suggestion
+        command_log.append(entry)
+        return entry
+
+    # Execute
+    result = _execute_action(intent, validation, ctrl, wait_for_move)
+
+    if result and result.success:
+        feedback = voice.generate_feedback("approved", intent, drone_pos=current_pos)
+        if action == "report_status":
+            feedback = result.message
+        entry["feedback"] = feedback
+        entry["execution"] = result.message
+    elif result:
+        entry["status"] = "error"
+        entry["feedback"] = f"Execution failed: {result.message}"
+    else:
+        entry["feedback"] = "Unknown action."
+
+    command_log.append(entry)
+    return entry
+
+
+def _execute_action(intent: dict, validation, ctrl: DroneController,
+                    wait: bool = False) -> CommandResult | None:
+    action = intent.get("action")
+
+    if action == "takeoff":
+        return ctrl.takeoff(intent.get("altitude", 10))
+
+    if action in ("goto", "move_relative"):
+        if validation.waypoints:
+            if wait:
+                return ctrl.fly_waypoints(validation.waypoints)
+            threading.Thread(
+                target=ctrl.fly_waypoints,
+                args=(validation.waypoints,),
+                daemon=True,
+            ).start()
+            return CommandResult(
+                True,
+                f"Flying rerouted path via {len(validation.waypoints)} waypoints",
+                "waypoints",
+            )
+        return ctrl.goto_location(
+            intent["x"], intent["y"], intent.get("altitude", 10), wait=wait,
+        )
+
+    if action == "change_altitude":
+        return ctrl.change_altitude(intent["altitude"])
+    if action == "land":
+        return ctrl.land()
+    if action == "hover":
+        return ctrl.hover()
+    if action == "report_status":
+        return ctrl.report_status()
+    return None
+
+
+def _clean_intent(intent: dict) -> dict:
+    return {k: v for k, v in intent.items() if k != "original_text"}
+
+
+# ── Queue Worker ─────────────────────────────────────────────────────────
+
+def _queue_worker(intents: list[dict], ctrl: DroneController):
+    """Background thread: execute a sequence of intents one by one."""
+    total = len(intents)
+    _set_queue_status(state="running", total=total, current=0)
+
+    for idx, intent in enumerate(intents):
+        if _queue_cancel.is_set():
+            _set_queue_status(state="cancelled")
+            entry = {
+                "timestamp": datetime.now().isoformat(),
+                "intent": _clean_intent(intent),
+                "status": "cancelled",
+                "feedback": f"Queue cancelled — skipped command {idx + 1}/{total}.",
+            }
+            command_log.append(entry)
+            return
+
+        _set_queue_status(current=idx + 1)
+        _process_single_intent(intent, ctrl, wait_for_move=True)
+
+    _set_queue_status(state="idle", total=0, current=0, commands=[])
 
 
 # ── Static Frontend ──────────────────────────────────────────────────────
@@ -88,8 +270,13 @@ def api_connect():
 
 @app.route("/api/command", methods=["POST"])
 def api_command():
-    """Process a voice/text command through the full pipeline."""
-    global command_log
+    """Process a voice/text command through the full pipeline.
+
+    Handles both single commands (executed inline) and multi-command
+    sequences (queued in a background thread with just-in-time validation).
+    Any new command aborts an active queue.
+    """
+    global _queue_thread
 
     if not drone or not drone.is_connected():
         return jsonify({"status": "error", "message": "Drone not connected. Connect first."}), 400
@@ -98,125 +285,54 @@ def api_command():
     if not text:
         return jsonify({"status": "error", "message": "No command text provided."}), 400
 
-    timestamp = datetime.now().isoformat()
+    # Abort any running queue — operator override
+    _cancel_active_queue()
 
-    # Step 1: Parse intent via Groq AI (or fallback)
-    intent = parse_command(text)
+    # Parse (now returns a list)
+    intents = parse_command(text)
 
-    # Step 2: Resolve location to coordinates (if goto)
-    if intent.get("action") == "goto" and "location" in intent:
-        loc = resolve_location(intent["location"])
-        if loc:
-            intent["x"] = loc.x
-            intent["y"] = loc.y
-            if intent.get("altitude") is None:
-                intent["altitude"] = loc.default_alt
-            intent["resolved_name"] = loc.name
-        else:
-            # Unknown location
-            entry = {
-                "timestamp": timestamp, "text": text, "intent": intent,
-                "status": "rejected", "reason": f"Unknown location: {intent['location']}",
-                "feedback": f"Unknown location: {intent['location']}. Please specify a known compound location."
-            }
-            command_log.append(entry)
-            return jsonify(entry)
-
-    # For move_relative, compute the target coordinates for validation
-    if intent.get("action") == "move_relative":
-        pos = drone.get_position()
-        direction_map = {
-            "north": (0, 1), "south": (0, -1),
-            "east": (1, 0), "west": (-1, 0),
-            "northeast": (0.707, 0.707), "northwest": (-0.707, 0.707),
-            "southeast": (0.707, -0.707), "southwest": (-0.707, -0.707),
-        }
-        d = intent.get("direction", "north").lower()
-        dx, dy = direction_map.get(d, (0, 0))
-        dist = intent.get("distance", 0)
-        intent["x"] = pos["x"] + dx * dist
-        intent["y"] = pos["y"] + dy * dist
-        if intent.get("altitude") is None:
-            intent["altitude"] = pos["alt"]
-
-    # For change_altitude, set x/y to current position
-    if intent.get("action") == "change_altitude":
-        pos = drone.get_position()
-        intent["x"] = pos["x"]
-        intent["y"] = pos["y"]
-
-    # Step 3: Validate
-    current_pos = drone.get_position()
-    validation = validate(intent, current_pos)
-
-    # Step 4: Log
-    entry = {
-        "timestamp": timestamp,
-        "text": text,
-        "intent": {k: v for k, v in intent.items() if k != "original_text"},
-        "status": "approved" if validation.approved else "rejected",
-        "reason": validation.reason,
-    }
-    if validation.waypoints:
-        entry["rerouted"] = True
-        entry["waypoint_count"] = len(validation.waypoints)
-        entry["path_quality"] = validation.path_quality
-
-    if not validation.approved:
-        feedback = voice.generate_feedback("rejected", intent, reason=validation.reason)
-        entry["feedback"] = feedback
-        entry["suggestion"] = validation.suggestion
-        command_log.append(entry)
+    if len(intents) == 1:
+        # Single command — process inline, return result directly
+        entry = _process_single_intent(intents[0], drone)
+        entry["text"] = text
         return jsonify(entry)
 
-    # Step 5: Execute
-    action = intent.get("action")
-    result = None
+    # Multi-command sequence — queue in background
+    summaries = []
+    for intent in intents:
+        action = intent.get("action", "?")
+        loc = intent.get("location", "")
+        summaries.append(f"{action}" + (f" {loc}" if loc else ""))
 
-    if action == "takeoff":
-        result = drone.takeoff(intent.get("altitude", 10))
-    elif action in ("goto", "move_relative"):
-        if validation.waypoints:
-            # ARA* produced a rerouted multi-waypoint path — run in background
-            # so we don't block the HTTP response for minutes
-            import threading
-            threading.Thread(
-                target=drone.fly_waypoints,
-                args=(validation.waypoints,),
-                daemon=True,
-            ).start()
-            result = CommandResult(
-                True,
-                f"Flying rerouted path via {len(validation.waypoints)} waypoints",
-                "waypoints",
-            )
-        else:
-            result = drone.goto_location(intent["x"], intent["y"], intent.get("altitude", 10))
-    elif action == "change_altitude":
-        result = drone.change_altitude(intent["altitude"])
-    elif action == "land":
-        result = drone.land()
-    elif action == "hover":
-        result = drone.hover()
-    elif action == "report_status":
-        result = drone.report_status()
-    else:
-        result = None
+    _set_queue_status(
+        state="running",
+        total=len(intents),
+        current=0,
+        commands=summaries,
+    )
 
-    if result and result.success:
-        feedback = voice.generate_feedback("approved", intent, drone_pos=current_pos)
-        if action == "report_status":
-            feedback = result.message
-        entry["feedback"] = feedback
-        entry["execution"] = result.message
-    elif result:
-        entry["status"] = "error"
-        entry["feedback"] = f"Execution failed: {result.message}"
-    else:
-        entry["feedback"] = "Unknown action."
+    _queue_thread = threading.Thread(
+        target=_queue_worker,
+        args=(intents, drone),
+        daemon=True,
+    )
+    _queue_thread.start()
 
-    command_log.append(entry)
-    return jsonify(entry)
+    return jsonify({
+        "status": "queued",
+        "text": text,
+        "queue_size": len(intents),
+        "commands": summaries,
+        "feedback": f"Queue started: {len(intents)} commands — "
+                    + ", ".join(summaries) + ".",
+    })
+
+
+@app.route("/api/queue")
+def api_queue():
+    """Current command queue state."""
+    with _queue_lock:
+        return jsonify(dict(_queue_status))
 
 
 @app.route("/api/status")

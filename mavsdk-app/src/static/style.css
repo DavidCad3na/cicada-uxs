@@ -192,6 +192,7 @@ html, body {
 .log-entry.rejected  { border-left-color: #ef4444; }
 .log-entry.error     { border-left-color: #7f1d1d; }
 .log-entry.system    { border-left-color: #52525b; }
+.log-entry.queued    { border-left-color: #a855f7; }
 .log-entry.executing { border-left-color: #3b82f6; }
 
 .log-time {
@@ -212,6 +213,7 @@ html, body {
 .log-entry.approved  .log-feedback { color: #4ade80; }
 .log-entry.rejected  .log-feedback { color: #f87171; }
 .log-entry.error     .log-feedback { color: #dc2626; }
+.log-entry.queued    .log-feedback { color: #c084fc; }
 .log-entry.executing .log-feedback { color: #60a5fa; }
 
 /* ── Center: Map ── */
