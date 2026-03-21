@@ -7,13 +7,17 @@ Bridges the voice/UI frontend to the Python drone backend.
 import json
 import os
 import sys
+import threading
 import time
 from datetime import datetime
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-# Ensure challenge package is importable
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+# Ensure both the challenge package and voice_input module are importable
+_project_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+sys.path.insert(0, _project_root)
+
+from voice_input import listen_and_transcribe
 
 from drone_control import DroneController
 from intent_parser import parse_command
@@ -27,6 +31,7 @@ voice = VoiceFeedback(use_server_tts=False)
 # Global drone controller (initialized on connect)
 drone: DroneController | None = None
 command_log: list[dict] = []
+_listen_stop = threading.Event()  # set this to abort an active recording
 
 
 # ── Static Frontend ──────────────────────────────────────────────────────
@@ -42,6 +47,26 @@ def static_files(filename):
 
 
 # ── API Endpoints ────────────────────────────────────────────────────────
+
+@app.route("/api/listen", methods=["POST"])
+def api_listen():
+    """Record from the server microphone and return Whisper transcription."""
+    _listen_stop.clear()
+    try:
+        text = listen_and_transcribe(language="en", stop_event=_listen_stop)
+        return jsonify({"status": "ok", "text": text})
+    except RuntimeError as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/listen/stop", methods=["POST"])
+def api_listen_stop():
+    """Signal an active recording to stop early."""
+    _listen_stop.set()
+    return jsonify({"status": "ok"})
+
 
 @app.route("/api/connect", methods=["POST"])
 def api_connect():
@@ -213,6 +238,13 @@ def api_command_log():
 # ── Main ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    print("Calibrating microphone...")
+    try:
+        from voice_input.recorder import _calibrate
+        _calibrate()  # warm up mic and cache threshold before any user interaction
+    except Exception as e:
+        print(f"  Mic calibration warning: {e} (will retry on first use)")
+
     print("╔══════════════════════════════════════════════╗")
     print("║  Voice Drone Operations Command Center       ║")
     print("║  Open http://localhost:5000 in your browser   ║")

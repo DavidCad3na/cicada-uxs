@@ -376,69 +376,51 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// ── Web Speech API ──────────────────────────────────────────────────────
+// ── Whisper Voice Input (server-side) ───────────────────────────────────
+// Calls /api/listen which records from the server mic using Whisper.
+// Recording stops automatically on silence — no manual stop needed.
 
-let recognition = null;
-
-if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    recognition = new SpeechRecognition();
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
-
-    recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        transcriptEl.textContent = transcript;
-        if (event.results[0].isFinal) {
-            sendCommand(transcript);
-            setTimeout(() => { transcriptEl.textContent = ''; }, 2000);
-        }
-    };
-
-    recognition.onend = () => {
-        isListening = false;
-        micBtn.classList.remove('listening');
-    };
-
-    recognition.onerror = (event) => {
-        isListening = false;
-        micBtn.classList.remove('listening');
-        if (event.error !== 'no-speech') {
-            transcriptEl.textContent = 'Mic error: ' + event.error;
-            setTimeout(() => { transcriptEl.textContent = ''; }, 3000);
-        }
-    };
-}
-
-function toggleMic() {
-    if (!recognition) {
-        transcriptEl.textContent = 'Speech not supported';
+async function toggleMic() {
+    if (isListening) {
+        // second press — signal the server to stop recording early
+        transcriptEl.textContent = 'Stopping...';
+        await fetch('/api/listen/stop', { method: 'POST' });
         return;
     }
-    if (isListening) {
-        recognition.stop();
-    } else {
-        isListening = true;
-        micBtn.classList.add('listening');
-        transcriptEl.textContent = 'Listening...';
-        recognition.start();
+
+    isListening = true;
+    micBtn.classList.add('listening');
+    transcriptEl.textContent = 'Listening... (speak, then pause or press mic to stop)';
+
+    try {
+        const resp = await fetch('/api/listen', { method: 'POST' });
+        const data = await resp.json();
+
+        if (data.status === 'ok' && data.text) {
+            transcriptEl.textContent = data.text;
+            await sendCommand(data.text);
+            setTimeout(() => { transcriptEl.textContent = ''; }, 2000);
+        } else {
+            transcriptEl.textContent = data.message || 'No speech detected.';
+            setTimeout(() => { transcriptEl.textContent = ''; }, 3000);
+        }
+    } catch (e) {
+        transcriptEl.textContent = 'Mic error: ' + e.message;
+        setTimeout(() => { transcriptEl.textContent = ''; }, 3000);
+    } finally {
+        isListening = false;
+        micBtn.classList.remove('listening');
     }
 }
 
 micBtn.addEventListener('click', toggleMic);
 
-// Spacebar push-to-talk (only when not focused on text input)
+// Spacebar: press to start, press again to stop early
+// e.repeat guards against held-key repeat firing toggleMic multiple times
 document.addEventListener('keydown', (e) => {
-    if (e.code === 'Space' && document.activeElement !== textInput) {
+    if (e.code === 'Space' && document.activeElement !== textInput && !e.repeat) {
         e.preventDefault();
-        if (!isListening) toggleMic();
-    }
-});
-document.addEventListener('keyup', (e) => {
-    if (e.code === 'Space' && document.activeElement !== textInput) {
-        e.preventDefault();
-        if (isListening) recognition.stop();
+        toggleMic();
     }
 });
 
