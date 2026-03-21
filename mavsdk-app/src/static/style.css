@@ -297,6 +297,7 @@ html, body {
 .log-entry.rejected  .log-feedback,
 .log-entry.blocked   .log-feedback { color: #f87171; }
 .log-entry.error     .log-feedback { color: #dc2626; }
+.log-entry.queued    .log-feedback { color: #c084fc; }
 .log-entry.executing .log-feedback { color: #60a5fa; }
 .log-entry.query     .log-feedback { color: #38bdf8; }
 
