@@ -38,7 +38,7 @@ html, body {
     font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
     background: var(--bg-root);
     color: var(--color-primary);
-    font-size: 13px;
+    font-size: 16px;
     transition: background 0.3s, color 0.3s;
 }
 
@@ -73,14 +73,14 @@ html, body {
 }
 
 .sys-tag {
-    font-size: 10px;
+    font-size: 13px;
     letter-spacing: 0.2em;
     text-transform: uppercase;
     color: var(--color-dim);
 }
 
 .header h1 {
-    font-size: 13px;
+    font-size: 16px;
     font-weight: 700;
     letter-spacing: 0.2em;
     text-transform: uppercase;
@@ -94,16 +94,16 @@ html, body {
 }
 
 .timestamp {
-    font-size: 10px;
+    font-size: 13px;
     letter-spacing: 0.15em;
     text-transform: uppercase;
-    color: var(--color-dimmer);
+    color: var(--color-dim);
 }
 
 /* ── Connect button ── */
 .connect-btn {
     font-family: inherit;
-    font-size: 10px;
+    font-size: 13px;
     letter-spacing: 0.2em;
     text-transform: uppercase;
     border: 1px solid var(--color-dim);
@@ -126,7 +126,7 @@ html, body {
     display: none;
     align-items: center;
     gap: 6px;
-    font-size: 10px;
+    font-size: 13px;
     color: #fbbf24;
 }
 .processing.active { display: flex; }
@@ -142,7 +142,7 @@ html, body {
 /* ── Main 3-column layout ── */
 .main-layout {
     display: grid;
-    grid-template-columns: 320px 1fr 320px;
+    grid-template-columns: 360px 1fr 360px;
     flex: 1;
     overflow: hidden;
     min-height: 0;
@@ -159,7 +159,7 @@ html, body {
 }
 .section-icon { font-size: 10px; color: var(--color-dim); }
 .section-header h2 {
-    font-size: 10px;
+    font-size: 13px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.2em;
@@ -172,6 +172,7 @@ html, body {
     flex-direction: column;
     border-right: 1px solid var(--border);
     overflow: hidden;
+    min-height: 0;
 }
 
 .log-entries {
@@ -194,16 +195,16 @@ html, body {
 .log-entry.executing { border-left-color: #3b82f6; }
 
 .log-time {
-    font-size: 10px;
+    font-size: 13px;
     color: #3f3f46;
 }
 .log-text {
-    font-size: 13px;
+    font-size: 16px;
     color: #e4e4e7;
     margin-top: 2px;
 }
 .log-feedback {
-    font-size: 11px;
+    font-size: 16px;
     font-style: italic;
     margin-top: 2px;
     color: #71717a;
@@ -245,7 +246,7 @@ html, body {
 .zoom-controls button {
     width: 28px; height: 28px;
     font-family: inherit;
-    font-size: 13px;
+    font-size: 16px;
     border: 1px solid #3f3f46;
     background: rgba(10, 15, 20, 0.9);
     color: #a1a1aa;
@@ -281,7 +282,7 @@ html, body {
     flex-shrink: 0;
 }
 .legend-item span {
-    font-size: 9px;
+    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.1em;
     color: #a1a1aa;
@@ -311,7 +312,7 @@ html, body {
 }
 
 .drone-label {
-    font-size: 11px;
+    font-size: 16px;
     font-weight: 700;
     letter-spacing: 0.2em;
     text-transform: uppercase;
@@ -324,7 +325,7 @@ html, body {
 }
 
 .badge {
-    font-size: 10px;
+    font-size: 13px;
     padding: 2px 6px;
     text-transform: uppercase;
     letter-spacing: 0.1em;
@@ -340,7 +341,7 @@ html, body {
     justify-content: space-between;
     align-items: center;
     padding: 4px 0;
-    font-size: 11px;
+    font-size: 16px;
 }
 .status-item .label {
     text-transform: uppercase;
@@ -365,7 +366,7 @@ html, body {
 }
 
 .cmd-prefix {
-    font-size: 11px;
+    font-size: 16px;
     text-transform: uppercase;
     letter-spacing: 0.15em;
     color: var(--color-dim);
@@ -378,7 +379,7 @@ html, body {
     border: 1px solid #52525b;
     background: transparent;
     color: #a1a1aa;
-    font-size: 14px;
+    font-size: 16px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -399,7 +400,7 @@ html, body {
 }
 
 .transcript-display {
-    font-size: 11px;
+    font-size: 16px;
     font-style: italic;
     color: #fbbf24;
     flex-shrink: 0;
@@ -412,7 +413,7 @@ html, body {
     border: 1px solid #3f3f46;
     color: #e4e4e7;
     font-family: inherit;
-    font-size: 13px;
+    font-size: 16px;
     padding: 8px 12px;
     outline: none;
     transition: border-color 0.15s;
@@ -423,7 +424,7 @@ html, body {
 
 .send-btn {
     font-family: inherit;
-    font-size: 10px;
+    font-size: 13px;
     letter-spacing: 0.2em;
     text-transform: uppercase;
     border: 1px solid #3f3f46;

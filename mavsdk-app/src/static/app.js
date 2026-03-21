@@ -272,15 +272,7 @@ function updateStatusPanel(data) {
     gpsEl.textContent = data.gps_fix ? 'FIX' : 'NO FIX';
     gpsEl.className   = 'value' + (data.gps_fix ? '' : ' danger');
 
-    // Armed badge + theme
-    const armedBadge = document.getElementById('badgeArmed');
-    if (data.armed) {
-        armedBadge.textContent = 'ARMED';
-        armedBadge.className   = 'badge armed';
-    } else {
-        armedBadge.textContent = 'DISARMED';
-        armedBadge.className   = 'badge';
-    }
+    // Theme update based on armed state
     updateTheme(data.armed);
 }
 
