@@ -7,8 +7,13 @@ Recording stops automatically once a sustained period of silence follows speech.
 
 Auto-calibration samples ambient noise at startup to derive a dynamic threshold,
 so the module works across different microphones and environments without tuning.
+
+Set MIC_DEVICE to select a specific microphone instead of the system default.
+Accepts either an input device index (e.g. "2") or a case-insensitive name
+substring (e.g. "usb").
 """
 
+import os
 import tempfile
 import threading
 
@@ -27,7 +32,7 @@ CHUNK_SIZE = int(SAMPLE_RATE * CHUNK_DURATION)
 
 CALIBRATION_DURATION = 1.0  # seconds of ambient noise to sample
 SILENCE_MULTIPLIER = 4.0    # threshold = ambient_rms * this (generous headroom)
-SILENCE_FLOOR = 80          # absolute minimum threshold (for very quiet mics)
+SILENCE_FLOOR = 20          # absolute minimum threshold (for very quiet mics)
 
 SILENCE_DURATION = 1.5      # seconds of consecutive silence → stop recording
 MIN_SPEECH_DURATION = 0.3   # minimum speech before silence can trigger stop
@@ -50,7 +55,61 @@ def _rms(chunk: np.ndarray) -> float:
     return float(np.sqrt(np.mean(chunk.astype(np.float64) ** 2)))
 
 
-def _calibrate(multiplier: float = SILENCE_MULTIPLIER) -> float:
+def _format_input_devices() -> str:
+    """Return a compact list of available input-capable devices."""
+    devices = sd.query_devices()
+    inputs: list[str] = []
+    for idx, info in enumerate(devices):
+        if int(info.get("max_input_channels", 0)) > 0:
+            inputs.append(f"{idx}:{info.get('name', 'unknown')}")
+    return ", ".join(inputs) if inputs else "none"
+
+
+def _resolve_input_device() -> int | None:
+    """
+    Resolve optional MIC_DEVICE env var to a sounddevice input device.
+
+    Returns:
+        int | None: Device index to use, or None for system default input.
+
+    Raises:
+        RuntimeError: If MIC_DEVICE is set but invalid.
+    """
+    requested = os.environ.get("MIC_DEVICE", "").strip()
+    if not requested:
+        return None
+
+    # index form: MIC_DEVICE=2
+    if requested.isdigit():
+        idx = int(requested)
+        try:
+            info = sd.query_devices(device=idx, kind="input")
+            print(f"Using microphone: {info.get('name', 'unknown')} (index {idx})")
+            return idx
+        except Exception as e:
+            available = _format_input_devices()
+            raise RuntimeError(
+                f"MIC_DEVICE index {idx} is invalid: {e}. Available inputs: {available}"
+            ) from e
+
+    # name-substring form: MIC_DEVICE=usb
+    needle = requested.lower()
+    for idx, info in enumerate(sd.query_devices()):
+        if int(info.get("max_input_channels", 0)) <= 0:
+            continue
+        name = str(info.get("name", ""))
+        if needle in name.lower():
+            print(f"Using microphone: {name} (index {idx})")
+            return idx
+
+    available = _format_input_devices()
+    raise RuntimeError(
+        f"MIC_DEVICE '{requested}' did not match any input device. "
+        f"Available inputs: {available}"
+    )
+
+
+def _calibrate(multiplier: float = SILENCE_MULTIPLIER, input_device: int | None = None) -> float:
     """
     Sample ambient noise to derive a dynamic silence threshold.
 
@@ -79,6 +138,7 @@ def _calibrate(multiplier: float = SILENCE_MULTIPLIER) -> float:
             channels=CHANNELS,
             dtype="int16",
             blocksize=CHUNK_SIZE,
+            device=input_device,
         ) as stream:
             # warm-up: discard first few chunks (mic driver often returns zeros)
             for _ in range(WARMUP_CHUNKS):
@@ -134,16 +194,22 @@ def record_until_silence(
     Raises:
         RuntimeError: If no microphone is found, recording fails,
                       or no speech was detected.
+
+    Environment:
+        MIC_DEVICE: Optional input device selector. Use an index ("2") or
+                    case-insensitive name substring ("usb").
     """
+    input_device = _resolve_input_device()
+
     # --- verify a microphone is available ---
     try:
-        if sd.query_devices(kind="input") is None:
+        if sd.query_devices(device=input_device, kind="input") is None:
             raise RuntimeError("No input audio device found.")
     except Exception as e:
         raise RuntimeError(f"Microphone unavailable: {e}") from e
 
     if silence_threshold is None:
-        silence_threshold = _calibrate()
+        silence_threshold = _calibrate(input_device=input_device)
 
     # pre-compute chunk counts from time targets
     chunks_for_silence = int(silence_duration / CHUNK_DURATION)
@@ -164,6 +230,7 @@ def record_until_silence(
             channels=CHANNELS,
             dtype="int16",
             blocksize=CHUNK_SIZE,
+            device=input_device,
         ) as stream:
             # discard initial chunks — mic driver often returns stale/zero data
             for _ in range(WARMUP_CHUNKS):

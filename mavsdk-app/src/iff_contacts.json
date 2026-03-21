@@ -7,6 +7,9 @@
         {"callsign": "Shadow-5", "type": "drone", "classification": "HOSTILE"},
         {"callsign": "Cobra-6", "type": "ground_vehicle", "classification": "HOSTILE"},
         {"callsign": "Ghost-7", "type": "ground_vehicle", "classification": "UNKNOWN"},
-        {"callsign": "Hawk-8", "type": "aircraft", "classification": "UNKNOWN"}
+        {"callsign": "Hawk-8",     "type": "aircraft",  "classification": "UNKNOWN"},
+        {"callsign": "Hellfire-1", "type": "missile",   "classification": "FRIENDLY"},
+        {"callsign": "Hellfire-2", "type": "missile",   "classification": "FRIENDLY"},
+        {"callsign": "SAM-Alpha",  "type": "missile",   "classification": "HOSTILE"}
     ]
 }

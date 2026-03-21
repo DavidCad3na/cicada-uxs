@@ -32,9 +32,11 @@ class CommandResult:
 class DroneController:
     """Thread-safe pymavlink drone controller with background telemetry."""
 
-    def __init__(self, connection_string: str = PYMAVLINK_CONNECTION, drone_id: str = "Alpha"):
+    def __init__(self, connection_string: str = PYMAVLINK_CONNECTION, drone_id: str = "Alpha",
+                 sysid: int = None):
         self.connection_string = connection_string
         self.drone_id = drone_id
+        self.sysid = sysid  # MAVLink system ID — used to filter the right SITL on multicast
         self.mav = None
         self._lock = threading.Lock()
         self._telem_thread: Optional[threading.Thread] = None
@@ -61,7 +63,23 @@ class DroneController:
         """Connect to SITL via pymavlink multicast."""
         try:
             self.mav = mavutil.mavlink_connection(self.connection_string)
-            self.mav.wait_heartbeat(timeout=15)
+
+            if self.sysid is not None:
+                # Multicast: wait for heartbeat from the specific SITL instance
+                deadline = time.time() + 15
+                found = False
+                while time.time() < deadline:
+                    msg = self.mav.recv_match(type="HEARTBEAT", blocking=True, timeout=2)
+                    if msg and msg.get_srcSystem() == self.sysid:
+                        self.mav.target_system    = self.sysid
+                        self.mav.target_component = msg.get_srcComponent()
+                        found = True
+                        break
+                if not found:
+                    return False
+            else:
+                self.mav.wait_heartbeat(timeout=15)
+
             self._state["connected"] = True
 
             # Request telemetry streams
@@ -83,10 +101,10 @@ class DroneController:
             return False
 
     def _wait_gps(self):
-        """Block until GPS has a 3D fix."""
+        """Block until GPS has a 3D fix from our target system."""
         for _ in range(30):
             msg = self.mav.recv_match(type="GPS_RAW_INT", blocking=True, timeout=5)
-            if msg and msg.fix_type >= 3:
+            if msg and msg.get_srcSystem() == self.mav.target_system and msg.fix_type >= 3:
                 self._state["gps_fix"] = True
                 return
         self._state["gps_fix"] = False
@@ -112,6 +130,8 @@ class DroneController:
                 mtype = msg.get_type()
 
                 if mtype == "GLOBAL_POSITION_INT":
+                    if msg.get_srcSystem() != self.mav.target_system:
+                        continue
                     lat = msg.lat / 1e7
                     lon = msg.lon / 1e7
                     alt = msg.relative_alt / 1000.0
@@ -143,6 +163,8 @@ class DroneController:
                         self._state["armed"] = armed
 
                 elif mtype == "SYS_STATUS":
+                    if msg.get_srcSystem() != self.mav.target_system:
+                        continue
                     with self._lock:
                         self._state["battery"] = msg.battery_remaining
 
@@ -335,6 +357,10 @@ class DroneController:
         """Hold current position (re-send current pos as target)."""
         pos = self.get_position()
         return self.goto_location(pos["x"], pos["y"], pos["alt"])
+
+    def fire_missile(self, target: str) -> CommandResult:
+        """Simulate a missile fire event (logged, no physical effect in sim)."""
+        return CommandResult(True, f"Missile fired at {target} [SIMULATED]", "fire_missile")
 
     def report_status(self) -> CommandResult:
         """Return current position and state as feedback."""

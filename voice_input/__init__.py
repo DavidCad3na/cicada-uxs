@@ -55,6 +55,7 @@ def listen_and_transcribe(
             silence_threshold=silence_threshold,
             silence_duration=silence_duration,
             stop_event=stop_event,
+            debug=True,
         )
         return transcribe(audio_path, language=language)
     finally:

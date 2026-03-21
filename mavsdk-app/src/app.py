@@ -11,7 +11,10 @@ import threading
 import time
 from datetime import datetime
 
+from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, request, send_from_directory
+
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 # Ensure both the challenge package and voice_input module are importable
 _project_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
@@ -29,8 +32,8 @@ app = Flask(__name__, static_folder="static")
 voice = VoiceFeedback(use_server_tts=False)
 
 
-# Global drone controller (initialized on connect)
-drone: DroneController | None = None
+# Multi-drone controllers: drone_id -> DroneController
+drones: dict[str, DroneController] = {}
 command_log: list[dict] = []
 _listen_stop = threading.Event()  # set this to abort an active recording
 
@@ -71,19 +74,17 @@ def api_listen_stop():
 
 @app.route("/api/connect", methods=["POST"])
 def api_connect():
-    """Connect to SITL."""
-    global drone
-    connection = request.json.get("connection", PYMAVLINK_CONNECTION) if request.json else PYMAVLINK_CONNECTION
-    drone_id = request.json.get("drone_id", "Alpha") if request.json else "Alpha"
+    """Connect a drone to SITL. Supports multiple drones via drone_id."""
+    data = request.json or {}
+    connection = data.get("connection", PYMAVLINK_CONNECTION)
+    drone_id = data.get("drone_id", "Alpha")
+    sysid    = data.get("sysid", None)
 
-    drone = DroneController(connection_string=connection, drone_id=drone_id)
-    success = drone.connect()
-
-    if success:
+    controller = DroneController(connection_string=connection, drone_id=drone_id, sysid=sysid)
+    if controller.connect():
+        drones[drone_id] = controller
         return jsonify({"status": "connected", "drone_id": drone_id})
-    else:
-        drone = None
-        return jsonify({"status": "error", "message": "Failed to connect to SITL"}), 500
+    return jsonify({"status": "error", "message": f"Failed to connect drone {drone_id} to SITL"}), 500
 
 
 @app.route("/api/command", methods=["POST"])
@@ -91,10 +92,13 @@ def api_command():
     """Process a voice/text command through the full pipeline."""
     global command_log
 
+    data = request.json or {}
+    drone_id = data.get("drone_id", "Alpha")
+    drone = drones.get(drone_id)
     if not drone or not drone.is_connected():
-        return jsonify({"status": "error", "message": "Drone not connected. Connect first."}), 400
+        return jsonify({"status": "error", "message": f"Drone {drone_id} not connected. Connect first."}), 400
 
-    text = request.json.get("text", "").strip()
+    text = data.get("text", "").strip()
     if not text:
         return jsonify({"status": "error", "message": "No command text provided."}), 400
 
@@ -200,6 +204,8 @@ def api_command():
         result = drone.hover()
     elif action == "report_status":
         result = drone.report_status()
+    elif action == "fire_missile":
+        result = drone.fire_missile(intent.get("target", "unknown"))
     else:
         result = None
 
@@ -221,25 +227,30 @@ def api_command():
 
 @app.route("/api/status")
 def api_status():
-    """Current drone state snapshot."""
+    """Current drone state snapshot. Accepts ?drone=<drone_id> (default: Alpha)."""
+    drone_id = request.args.get("drone", "Alpha")
+    drone = drones.get(drone_id)
     if not drone or not drone.is_connected():
-        return jsonify({"connected": False})
+        return jsonify({"connected": False, "drone_id": drone_id})
     pos = drone.get_position()
     state = drone.get_state()
-    return jsonify({**pos, **state, "connected": True})
+    return jsonify({**pos, **state, "connected": True, "drone_id": drone_id})
 
 
 @app.route("/api/telemetry")
 def api_telemetry():
-    """SSE stream of drone telemetry at ~4Hz."""
+    """SSE stream of drone telemetry at ~4Hz. Accepts ?drone=<drone_id> (default: Alpha)."""
+    drone_id = request.args.get("drone", "Alpha")
+
     def generate():
         while True:
-            if drone and drone.is_connected():
-                pos = drone.get_position()
-                state = drone.get_state()
-                data = json.dumps({**pos, **state, "connected": True})
+            d = drones.get(drone_id)
+            if d and d.is_connected():
+                pos = d.get_position()
+                state = d.get_state()
+                data = json.dumps({**pos, **state, "connected": True, "drone_id": drone_id})
             else:
-                data = json.dumps({"connected": False})
+                data = json.dumps({"connected": False, "drone_id": drone_id})
             yield f"data: {data}\n\n"
             time.sleep(0.25)
 

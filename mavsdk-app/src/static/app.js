@@ -2,16 +2,40 @@
 
 // ── State ────────────────────────────────────────────────────────────────
 
-let isConnected  = false;
+let activeDroneId = 'Alpha';
+let connectedDrones = new Set();
 let isListening  = false;
 let isProcessing = false;
-let dronePos     = { x: -40, y: 0, alt: 0 };
-let droneState   = { armed: false, mode: 'UNKNOWN', battery: 100 };
-let droneTrail   = [];
 let mapZoom      = 1.0;
 const MAX_TRAIL  = 200;
 
-// ── Compound Layout (from challenge/config.py) ────────────────────────────
+// Per-drone telemetry + render state
+const DRONE = {
+    Alpha: {
+        pos:        { x: -40, y: 0, alt: 0 },
+        state:      { armed: false, mode: 'UNKNOWN', battery: 100 },
+        trail:      [],
+        color:      '#22c55e',
+        glowStart:  'rgba(34,197,94,0.3)',
+        glowEnd:    'rgba(34,197,94,0)',
+        trailColor: 'rgba(59,130,246,0.3)',
+        label:      '\u03b1',   // α
+        evtSource:  null,
+    },
+    Bravo: {
+        pos:        { x: -40, y: 5, alt: 0 },
+        state:      { armed: false, mode: 'UNKNOWN', battery: 100 },
+        trail:      [],
+        color:      '#38bdf8',
+        glowStart:  'rgba(56,189,248,0.3)',
+        glowEnd:    'rgba(56,189,248,0)',
+        trailColor: 'rgba(56,189,248,0.25)',
+        label:      '\u03b2',   // β
+        evtSource:  null,
+    },
+};
+
+// ── Compound Layout ───────────────────────────────────────────────────────
 
 const LOCATIONS = [
     { name: 'Landing Pad',  x: -40,   y:   0,    type: 'waypoint'  },
@@ -28,6 +52,9 @@ const LOCATIONS = [
     { name: 'Containers',   x:   1.5, y: -16.5,  type: 'structure' },
     { name: 'Comms Tower',  x:  40,   y:  30,    type: 'caution'   },
     { name: 'Fuel Depot',   x: -27,   y: -32,    type: 'danger'    },
+    { name: 'Missile Rack', x:  42,   y: -18,    type: 'caution'   },
+    { name: 'Cobra-6',      x:  35,   y: -22,    type: 'hostile'   },
+    { name: 'Ghost-7',      x: -55,   y:   5,    type: 'unknown'   },
 ];
 
 const NO_FLY_ZONES = [
@@ -60,6 +87,16 @@ function updateTheme(armed) {
     document.body.dataset.armed = armed ? 'true' : 'false';
 }
 
+// ── Sys tag ───────────────────────────────────────────────────────────────
+
+function updateSysTag() {
+    const n = connectedDrones.size;
+    const el = document.getElementById('sysTag');
+    if (n === 0)      el.textContent = '[ SYS:STANDBY ]';
+    else if (n === 1) el.textContent = '[ SYS:ONLINE ]';
+    else              el.textContent = '[ SYS:ONLINE \u00d7' + n + ' ]';  // ×
+}
+
 // ── Map Rendering ─────────────────────────────────────────────────────────
 
 function resizeCanvas() {
@@ -79,7 +116,7 @@ function enuToCanvas(xEnu, yEnu) {
     const scale = Math.min((w - 2 * pad) / 150, (h - 2 * pad) / 100) * mapZoom;
     return {
         px: w / 2 + xEnu * scale,
-        py: h / 2 - yEnu * scale,   // canvas y is inverted
+        py: h / 2 - yEnu * scale,
     };
 }
 
@@ -96,14 +133,12 @@ function drawMap() {
     ctx.strokeStyle = 'rgba(45,58,77,0.4)';
     ctx.lineWidth = 0.5;
     for (let x = -70; x <= 70; x += 10) {
-        const gridStart = enuToCanvas(x, -50);
-        const gridEnd   = enuToCanvas(x,  50);
-        ctx.beginPath(); ctx.moveTo(gridStart.px, gridStart.py); ctx.lineTo(gridEnd.px, gridEnd.py); ctx.stroke();
+        const s = enuToCanvas(x, -50), e = enuToCanvas(x, 50);
+        ctx.beginPath(); ctx.moveTo(s.px, s.py); ctx.lineTo(e.px, e.py); ctx.stroke();
     }
     for (let y = -50; y <= 50; y += 10) {
-        const gridStart = enuToCanvas(-70, y);
-        const gridEnd   = enuToCanvas( 70, y);
-        ctx.beginPath(); ctx.moveTo(gridStart.px, gridStart.py); ctx.lineTo(gridEnd.px, gridEnd.py); ctx.stroke();
+        const s = enuToCanvas(-70, y), e = enuToCanvas(70, y);
+        ctx.beginPath(); ctx.moveTo(s.px, s.py); ctx.lineTo(e.px, e.py); ctx.stroke();
     }
 
     // Compass labels
@@ -120,16 +155,16 @@ function drawMap() {
     const gateTop    = enuToCanvas(-57,  5);
 
     ctx.beginPath();
-    let point = enuToCanvas(-57,  37); ctx.moveTo(point.px, point.py);
-    point     = enuToCanvas( 57,  37); ctx.lineTo(point.px, point.py);
-    point     = enuToCanvas( 57, -37); ctx.lineTo(point.px, point.py);
-    point     = enuToCanvas(-57, -37); ctx.lineTo(point.px, point.py);
+    let pt = enuToCanvas(-57, 37); ctx.moveTo(pt.px, pt.py);
+    pt = enuToCanvas( 57,  37); ctx.lineTo(pt.px, pt.py);
+    pt = enuToCanvas( 57, -37); ctx.lineTo(pt.px, pt.py);
+    pt = enuToCanvas(-57, -37); ctx.lineTo(pt.px, pt.py);
     ctx.lineTo(gateBottom.px, gateBottom.py);
     ctx.stroke();
 
     ctx.beginPath();
     ctx.moveTo(gateTop.px, gateTop.py);
-    point = enuToCanvas(-57, 37); ctx.lineTo(point.px, point.py);
+    pt = enuToCanvas(-57, 37); ctx.lineTo(pt.px, pt.py);
     ctx.stroke();
 
     // Gate gap (dashed amber)
@@ -144,71 +179,88 @@ function drawMap() {
 
     // No-fly zones
     for (const zone of NO_FLY_ZONES) {
-        const zoneCenter = enuToCanvas(zone.x, zone.y);
-        const zoneEdge   = enuToCanvas(zone.x + zone.radius, zone.y);
-        const radiusPx   = zoneEdge.px - zoneCenter.px;
+        const zc = enuToCanvas(zone.x, zone.y);
+        const ze = enuToCanvas(zone.x + zone.radius, zone.y);
+        const r  = ze.px - zc.px;
 
         ctx.fillStyle = zone.color;
-        ctx.beginPath(); ctx.arc(zoneCenter.px, zoneCenter.py, radiusPx, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(zc.px, zc.py, r, 0, Math.PI * 2); ctx.fill();
 
         ctx.strokeStyle = zone.border;
         ctx.lineWidth = 1.5;
         ctx.setLineDash([6, 3]);
-        ctx.beginPath(); ctx.arc(zoneCenter.px, zoneCenter.py, radiusPx, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(zc.px, zc.py, r, 0, Math.PI * 2); ctx.stroke();
         ctx.setLineDash([]);
 
         ctx.fillStyle = zone.border;
         ctx.font = 'bold 9px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText('NO FLY ZONE', zoneCenter.px, zoneCenter.py - radiusPx - 4);
+        ctx.fillText('NO FLY ZONE', zc.px, zc.py - r - 4);
     }
 
     // Named locations
     for (const loc of LOCATIONS) {
-        const locationPt = enuToCanvas(loc.x, loc.y);
-        const color  = loc.type === 'structure' ? '#64748b' : loc.type === 'danger' ? '#ef4444' : '#f59e0b';
-        const dotSize = loc.type === 'structure' ? 3 : 4;
+        const lp = enuToCanvas(loc.x, loc.y);
+        let color, dotSize, square = false;
+
+        switch (loc.type) {
+            case 'hostile':   color = '#ef4444'; dotSize = 5; square = true; break;
+            case 'unknown':   color = '#a78bfa'; dotSize = 5; square = true; break;
+            case 'danger':    color = '#ef4444'; dotSize = 4; break;
+            case 'caution':   color = '#f59e0b'; dotSize = 4; break;
+            case 'structure': color = '#64748b'; dotSize = 3; break;
+            default:          color = '#f59e0b'; dotSize = 4;
+        }
 
         ctx.fillStyle = color;
-        ctx.beginPath(); ctx.arc(locationPt.px, locationPt.py, dotSize, 0, Math.PI * 2); ctx.fill();
+        if (square) {
+            ctx.fillRect(lp.px - dotSize / 2, lp.py - dotSize / 2, dotSize, dotSize);
+        } else {
+            ctx.beginPath(); ctx.arc(lp.px, lp.py, dotSize, 0, Math.PI * 2); ctx.fill();
+        }
 
-        ctx.fillStyle = '#94a3b8';
+        ctx.fillStyle = color;
         ctx.font = '9px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(loc.name, locationPt.px, locationPt.py - dotSize - 4);
+        ctx.fillText(loc.name, lp.px, lp.py - dotSize - 4);
     }
 
-    // Drone trail
-    if (droneTrail.length > 1) {
-        ctx.strokeStyle = 'rgba(59,130,246,0.3)';
+    // Drone trails
+    for (const drone of Object.values(DRONE)) {
+        if (drone.trail.length < 2) continue;
+        ctx.strokeStyle = drone.trailColor;
         ctx.lineWidth = 1.5;
         ctx.beginPath();
-        let trailPt = enuToCanvas(droneTrail[0].x, droneTrail[0].y);
-        ctx.moveTo(trailPt.px, trailPt.py);
-        for (let index = 1; index < droneTrail.length; index++) {
-            trailPt = enuToCanvas(droneTrail[index].x, droneTrail[index].y);
-            ctx.lineTo(trailPt.px, trailPt.py);
+        let tp = enuToCanvas(drone.trail[0].x, drone.trail[0].y);
+        ctx.moveTo(tp.px, tp.py);
+        for (let i = 1; i < drone.trail.length; i++) {
+            tp = enuToCanvas(drone.trail[i].x, drone.trail[i].y);
+            ctx.lineTo(tp.px, tp.py);
         }
         ctx.stroke();
     }
 
-    // Drone position
-    const dronePt    = enuToCanvas(dronePos.x, dronePos.y);
-    const glowRadius = 18 * Math.min(mapZoom, 1.5);
+    // Drone markers (on top of trails)
+    for (const [id, drone] of Object.entries(DRONE)) {
+        if (!connectedDrones.has(id)) continue;
 
-    const glowGradient = ctx.createRadialGradient(dronePt.px, dronePt.py, 0, dronePt.px, dronePt.py, glowRadius);
-    glowGradient.addColorStop(0, 'rgba(34,197,94,0.3)');
-    glowGradient.addColorStop(1, 'rgba(34,197,94,0)');
-    ctx.fillStyle = glowGradient;
-    ctx.beginPath(); ctx.arc(dronePt.px, dronePt.py, glowRadius, 0, Math.PI * 2); ctx.fill();
+        const dp = enuToCanvas(drone.pos.x, drone.pos.y);
+        const glowRadius = 18 * Math.min(mapZoom, 1.5);
 
-    ctx.fillStyle = '#22c55e';
-    ctx.beginPath(); ctx.arc(dronePt.px, dronePt.py, 5, 0, Math.PI * 2); ctx.fill();
+        const glow = ctx.createRadialGradient(dp.px, dp.py, 0, dp.px, dp.py, glowRadius);
+        glow.addColorStop(0, drone.glowStart);
+        glow.addColorStop(1, drone.glowEnd);
+        ctx.fillStyle = glow;
+        ctx.beginPath(); ctx.arc(dp.px, dp.py, glowRadius, 0, Math.PI * 2); ctx.fill();
 
-    ctx.fillStyle = '#22c55e';
-    ctx.font = 'bold 10px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('α ' + dronePos.alt.toFixed(1) + 'm', dronePt.px, dronePt.py - 12);
+        ctx.fillStyle = drone.color;
+        ctx.beginPath(); ctx.arc(dp.px, dp.py, 5, 0, Math.PI * 2); ctx.fill();
+
+        ctx.fillStyle = drone.color;
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(drone.label + ' ' + drone.pos.alt.toFixed(1) + 'm', dp.px, dp.py - 12);
+    }
 }
 
 // ── Zoom ──────────────────────────────────────────────────────────────────
@@ -232,86 +284,100 @@ canvas.addEventListener('wheel', (event) => {
 
 // ── SSE Telemetry ─────────────────────────────────────────────────────────
 
-let evtSource = null;
+function startTelemetry(droneId) {
+    const drone = DRONE[droneId];
+    if (drone.evtSource) drone.evtSource.close();
 
-function startTelemetry() {
-    if (evtSource) evtSource.close();
-    evtSource = new EventSource('/api/telemetry');
-    evtSource.onmessage = (event) => {
+    drone.evtSource = new EventSource('/api/telemetry?drone=' + droneId);
+    drone.evtSource.onmessage = (event) => {
         const data = JSON.parse(event.data);
         if (data.connected) {
-            dronePos = { x: data.x || -40, y: data.y || 0, alt: data.alt || 0 };
-            droneState = {
-                armed:   data.armed || false,
-                mode:    data.mode  || 'UNKNOWN',
+            drone.pos   = { x: data.x || drone.pos.x, y: data.y || drone.pos.y, alt: data.alt || 0 };
+            drone.state = {
+                armed:   data.armed   || false,
+                mode:    data.mode    || 'UNKNOWN',
                 battery: data.battery != null ? data.battery : 100,
             };
 
-            droneTrail.push({ x: dronePos.x, y: dronePos.y });
-            if (droneTrail.length > MAX_TRAIL) droneTrail.shift();
+            drone.trail.push({ x: drone.pos.x, y: drone.pos.y });
+            if (drone.trail.length > MAX_TRAIL) drone.trail.shift();
 
-            updateStatusPanel(data);
+            updateStatusPanel(data, droneId);
+            updateTheme(DRONE.Alpha.state.armed || DRONE.Bravo.state.armed);
         }
         requestAnimationFrame(drawMap);
     };
 }
 
-function updateStatusPanel(data) {
-    document.getElementById('sMode').textContent    = data.mode || '—';
-    document.getElementById('sAlt').textContent     = (data.alt     || 0).toFixed(1) + 'm';
-    document.getElementById('sPosX').textContent    = (data.x       || 0).toFixed(1);
-    document.getElementById('sPosY').textContent    = (data.y       || 0).toFixed(1);
-    document.getElementById('sHeading').textContent = (data.heading || 0).toFixed(0) + '°';
+function updateStatusPanel(data, droneId) {
+    const p  = droneId === 'Alpha' ? 's' : 'b';
+    const el = (id) => document.getElementById(p + id);
+
+    el('Mode').textContent    = data.mode || '—';
+    el('Alt').textContent     = (data.alt     || 0).toFixed(1) + 'm';
+    el('PosX').textContent    = (data.x       || 0).toFixed(1);
+    el('PosY').textContent    = (data.y       || 0).toFixed(1);
+    el('Heading').textContent = (data.heading || 0).toFixed(0) + '°';
 
     const battery = data.battery != null ? data.battery : 100;
-    const batEl   = document.getElementById('sBattery');
+    const batEl   = el('Battery');
     batEl.textContent = battery + '%';
     batEl.className   = 'value' + (battery < 30 ? ' danger' : battery < 60 ? ' warning' : '');
 
-    const gpsEl = document.getElementById('sGPS');
+    const gpsEl = el('GPS');
     gpsEl.textContent = data.gps_fix ? 'FIX' : 'NO FIX';
     gpsEl.className   = 'value' + (data.gps_fix ? '' : ' danger');
-
-    // Theme update based on armed state
-    updateTheme(data.armed);
 }
 
 // ── Connection ────────────────────────────────────────────────────────────
 
-async function connectDrone() {
-    const btn = document.getElementById('connectBtn');
+async function connectDrone(droneId) {
+    const btnId = droneId === 'Alpha' ? 'connectBtnAlpha' : 'connectBtnBravo';
+    const btn   = document.getElementById(btnId);
     btn.disabled    = true;
     btn.textContent = 'CONNECTING...';
 
     try {
+        // Alpha = SITL instance 0 (sysid 1), Bravo = instance 1 (sysid 2)
+        const sysid = droneId === 'Alpha' ? 1 : 2;
         const resp = await fetch('/api/connect', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({}),
+            body:    JSON.stringify({ drone_id: droneId, sysid: sysid }),
         });
         const data = await resp.json();
+
         if (data.status === 'connected') {
-            isConnected = true;
-            btn.textContent = '● CONNECTED';
+            connectedDrones.add(droneId);
+            btn.textContent = '● ' + droneId.toUpperCase();
             btn.classList.add('connected');
 
-            document.getElementById('sysTag').textContent  = '[ SYS:ONLINE ]';
-            document.getElementById('badgeConnected').textContent = 'CONNECTED';
-            document.getElementById('badgeConnected').classList.add('connected');
-            document.getElementById('sDroneId').textContent = (data.drone_id || 'Alpha').toUpperCase();
+            const badgeId = droneId === 'Alpha' ? 'badgeAlphaConnected' : 'badgeBravoConnected';
+            const badge   = document.getElementById(badgeId);
+            badge.textContent = 'CONNECTED';
+            badge.classList.add('connected');
 
-            addLogEntry('system', 'Connected — ' + (data.drone_id || 'Alpha'), '');
-            startTelemetry();
+            updateSysTag();
+            addLogEntry('system', 'Connected — ' + droneId.toUpperCase(), '');
+            startTelemetry(droneId);
         } else {
-            btn.textContent = 'RETRY';
+            btn.textContent = droneId.toUpperCase();
             btn.disabled    = false;
-            addLogEntry('error', 'Failed to connect: ' + (data.message || 'Unknown error'), '');
+            addLogEntry('error', 'Failed to connect ' + droneId + ': ' + (data.message || 'Unknown error'), '');
         }
-    } catch (error) {
-        btn.textContent = 'RETRY';
+    } catch (err) {
+        btn.textContent = droneId.toUpperCase();
         btn.disabled    = false;
-        addLogEntry('error', 'Connection error: ' + error.message, '');
+        addLogEntry('error', 'Connection error (' + droneId + '): ' + err.message, '');
     }
+}
+
+// ── Drone Selector ────────────────────────────────────────────────────────
+
+function setActiveDrone(droneId) {
+    activeDroneId = droneId;
+    document.getElementById('selectorAlpha').classList.toggle('active', droneId === 'Alpha');
+    document.getElementById('selectorBravo').classList.toggle('active', droneId === 'Bravo');
 }
 
 // ── Command Submission ────────────────────────────────────────────────────
@@ -326,14 +392,14 @@ async function sendCommand(text) {
         const resp = await fetch('/api/command', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ text: text.trim() }),
+            body:    JSON.stringify({ text: text.trim(), drone_id: activeDroneId }),
         });
         const data   = await resp.json();
         const status = data.status || 'unknown';
-        addLogEntry(status, text.trim(), data.feedback || data.reason || '');
+        addLogEntry(status, '[' + activeDroneId + '] ' + text.trim(), data.feedback || data.reason || '');
         if (data.feedback) speak(data.feedback);
-    } catch (error) {
-        addLogEntry('error', text.trim(), 'Error: ' + error.message);
+    } catch (err) {
+        addLogEntry('error', text.trim(), 'Error: ' + err.message);
     }
 
     isProcessing = false;

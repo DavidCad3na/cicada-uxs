@@ -20,7 +20,10 @@
                 <div class="spinner"></div>
                 <span>Processing...</span>
             </div>
-            <button class="connect-btn" id="connectBtn" onclick="connectDrone()">CONNECT</button>
+            <div class="connect-group">
+                <button class="connect-btn" id="connectBtnAlpha" onclick="connectDrone('Alpha')">ALPHA</button>
+                <button class="connect-btn bravo" id="connectBtnBravo" onclick="connectDrone('Bravo')">BRAVO</button>
+            </div>
             <span class="timestamp" id="timestamp"></span>
         </div>
     </nav>
@@ -65,6 +68,10 @@
                         <span>Alpha</span>
                     </div>
                     <div class="legend-item">
+                        <div class="legend-dot" style="background:#38bdf8;"></div>
+                        <span>Bravo</span>
+                    </div>
+                    <div class="legend-item">
                         <div class="legend-dot" style="background:#ef4444;"></div>
                         <span>No Fly</span>
                     </div>
@@ -73,8 +80,12 @@
                         <span>Waypoint</span>
                     </div>
                     <div class="legend-item">
-                        <div class="legend-dot" style="background:#3b82f6;opacity:0.5;"></div>
-                        <span>Trail</span>
+                        <div class="legend-dot hostile-dot"></div>
+                        <span>Hostile</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-dot unknown-dot"></div>
+                        <span>Unknown</span>
                     </div>
                 </div>
             </div>
@@ -92,7 +103,7 @@
                 <div class="drone-panel-header">
                     <span class="drone-label">&#9632; UxS-ALPHA</span>
                     <div class="drone-badges">
-                        <span class="badge" id="badgeConnected">DISCONNECTED</span>
+                        <span class="badge" id="badgeAlphaConnected">DISCONNECTED</span>
                     </div>
                 </div>
                 <div class="status-item">
@@ -123,12 +134,44 @@
                     <span class="label">GPS</span>
                     <span class="value" id="sGPS">—</span>
                 </div>
-                <div class="status-item">
-                    <span class="label">Callsign</span>
-                    <span class="value" id="sDroneId">ALPHA</span>
+            </div>
+
+            <!-- UxS-BRAVO panel -->
+            <div class="drone-panel bravo">
+                <div class="drone-panel-header">
+                    <span class="drone-label">&#9632; UxS-BRAVO</span>
+                    <div class="drone-badges">
+                        <span class="badge" id="badgeBravoConnected">DISCONNECTED</span>
+                    </div>
                 </div>
-                <!-- Keep sArmed hidden — app.js updates its className, badge handles display -->
-                <span id="sArmed" style="display:none;">—</span>
+                <div class="status-item">
+                    <span class="label">Mode</span>
+                    <span class="value" id="bMode">—</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">Alt</span>
+                    <span class="value" id="bAlt">—</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">Pos X</span>
+                    <span class="value" id="bPosX">—</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">Pos Y</span>
+                    <span class="value" id="bPosY">—</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">Hdg</span>
+                    <span class="value" id="bHeading">—</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">Bat</span>
+                    <span class="value" id="bBattery">—</span>
+                </div>
+                <div class="status-item">
+                    <span class="label">GPS</span>
+                    <span class="value" id="bGPS">—</span>
+                </div>
             </div>
         </aside>
 
@@ -137,6 +180,11 @@
     <!-- Bottom: CMD bar -->
     <div class="cmd-bar">
         <span class="cmd-prefix">CMD&gt;</span>
+        <!-- Drone selector — determines which drone receives the command -->
+        <div class="drone-selector">
+            <button class="selector-btn active" id="selectorAlpha" onclick="setActiveDrone('Alpha')" title="Send to Alpha">&#945;</button>
+            <button class="selector-btn" id="selectorBravo" onclick="setActiveDrone('Bravo')" title="Send to Bravo">&#946;</button>
+        </div>
         <button class="mic-btn" id="micBtn" title="Hold to talk (or hold Space)">&#9679;</button>
         <span class="transcript-display" id="transcript"></span>
         <input type="text" class="text-input" id="textInput"

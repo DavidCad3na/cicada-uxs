@@ -83,6 +83,16 @@ LOCATIONS = {
     "communications tower":     LocationInfo("Comms Tower", 40, 30, 30),
     "comm tower":               LocationInfo("Comms Tower", 40, 30, 30),
     "fuel depot":               LocationInfo("Fuel Depot", -27, -32, 10),
+    # Missile rack / weapons
+    "missile rack":             LocationInfo("Missile Rack", 42, -18, 8),
+    "hellfire rack":            LocationInfo("Missile Rack", 42, -18, 8),
+    "weapons depot":            LocationInfo("Missile Rack", 42, -18, 8),
+    "weapons rack":             LocationInfo("Missile Rack", 42, -18, 8),
+    # Ground vehicle positions
+    "cobra-6":                  LocationInfo("Cobra-6 Position", 35, -22, 8),
+    "cobra 6":                  LocationInfo("Cobra-6 Position", 35, -22, 8),
+    "ghost-7":                  LocationInfo("Ghost-7 Position", -55, 5, 8),
+    "ghost 7":                  LocationInfo("Ghost-7 Position", -55, 5, 8),
 }
 
 
@@ -119,8 +129,7 @@ def check_iff(target_name: str) -> Optional[dict]:
 
 IMPOSSIBLE_KEYWORDS = {
     "self-destruct", "self destruct", "selfdestruct",
-    "launch missile", "fire missile", "shoot", "fire weapon",
-    "eject", "detonate", "bomb", "attack", "destroy",
+    "shoot", "eject", "detonate", "bomb", "attack", "destroy",
     "turn off engines", "shut down engines", "kill engines",
     "kamikaze", "ram",
 }
@@ -262,5 +271,24 @@ def validate(intent: dict, current_pos: dict) -> ValidationResult:
                     "Cannot engage friendly forces."
                 )
         return ValidationResult(True, f"IFF check passed for {target_name}", "")
+
+    # 12. fire_missile — IFF-gated weapons release
+    if action == "fire_missile":
+        target = intent.get("target", "")
+        contact = check_iff(target)
+        if contact:
+            if contact["classification"] == "FRIENDLY":
+                return ValidationResult(
+                    False,
+                    f"IFF: {target} is FRIENDLY — weapons hold",
+                    "Cannot engage friendly forces."
+                )
+            if contact["classification"] == "UNKNOWN":
+                return ValidationResult(
+                    False,
+                    f"IFF: {target} is UNKNOWN — weapons hold pending PID",
+                    "Confirm target classification before engaging."
+                )
+        return ValidationResult(True, f"Weapons free on {target}", "")
 
     return ValidationResult(True, "Command approved", "")

@@ -4,9 +4,10 @@
 # Run launch_gz.sh FIRST in another terminal.
 #
 # Usage:
-#   ./launch_sitl.sh               # ArduCopter (default)
-#   ./launch_sitl.sh copter        # ArduCopter
-#   ./launch_sitl.sh rover         # ArduRover
+#   ./launch_sitl.sh               # ArduCopter instance 0 (Alpha)
+#   ./launch_sitl.sh copter        # ArduCopter instance 0 (Alpha)
+#   ./launch_sitl.sh copter 1      # ArduCopter instance 1 (Bravo, ports 9012/9013)
+#   ./launch_sitl.sh rover         # ArduRover instance 0
 #
 set -euo pipefail
 
@@ -14,6 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARDUPILOT_DIR="${SCRIPT_DIR}/ardupilot"
 GZ_PLUGIN_DIR="${SCRIPT_DIR}/ardupilot_gazebo"
 VEHICLE="${1:-copter}"
+INSTANCE="${2:-0}"
 
 # Set up Gazebo resource paths
 export GZ_VERSION=harmonic
@@ -46,10 +48,11 @@ if [ ! -f "${SIM_VEHICLE}" ]; then
 fi
 
 echo "══════════════════════════════════════════════════════"
-echo " ArduPilot SITL — ${VEHICLE_TYPE}"
+echo " ArduPilot SITL — ${VEHICLE_TYPE} (instance ${INSTANCE})"
 echo ""
-echo "  Frame:  ${FRAME}"
-echo "  Model:  JSON (Gazebo physics backend)"
+echo "  Frame:    ${FRAME}"
+echo "  Model:    JSON (Gazebo physics backend)"
+echo "  Instance: ${INSTANCE}  (sysid=$((INSTANCE + 1)), FDM port=$((9002 + INSTANCE * 10)))"
 echo ""
 echo "  Connect (multiple clients OK):"
 echo "    mavutil.mavlink_connection('mcast:')"
@@ -58,6 +61,7 @@ echo ""
 
 # Launch SITL via sim_vehicle.py
 #   --mcast: UDP multicast on 239.255.145.50:14550 (unlimited clients)
+#   -I N:    instance index N — sets sysid=N+1 and FDM ports 9002+N*10/9003+N*10
 exec "${SIM_VEHICLE}" \
     -v "${VEHICLE_TYPE}" \
     -f "${FRAME}" \
@@ -65,4 +69,5 @@ exec "${SIM_VEHICLE}" \
     --no-rebuild \
     -l 32.990,-106.975,1400,0 \
     --no-mavproxy \
-    --mcast
+    --mcast \
+    -I "${INSTANCE}"

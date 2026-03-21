@@ -10,8 +10,8 @@ import re
 
 from dotenv import load_dotenv
 
-# Load .env from project root
-load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".env"))
+# Load .env from this directory (mavsdk-app/src/.env)
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
@@ -26,6 +26,7 @@ Available actions:
 - hover: {"action": "hover"}
 - report_status: {"action": "report_status"}
 - identify: {"action": "identify", "target": "<entity name>"}
+- fire_missile: {"action": "fire_missile", "target": "<callsign or location>"}
 - reject_impossible: {"action": "reject_impossible", "reason": "<why this is impossible>"}
 
 Known locations in the compound:
@@ -43,18 +44,22 @@ Known locations in the compound:
 - shipping containers / containers
 - comms tower / communications tower (tall antenna mast)
 - fuel depot (two cylindrical tanks)
+- missile rack / hellfire rack / weapons depot (near motor pool)
+- Cobra-6 position (hostile vehicle at motor pool)
+- Ghost-7 position (unknown vehicle near gate)
 
 Rules:
 1. If the command names a known location, use "goto" with the location name.
 2. If the command specifies a relative direction and distance (e.g. "fly north 50 meters"), use "move_relative".
 3. If the command only changes altitude (descend, climb, ascend, drop to X meters), use "change_altitude".
-4. If the command is physically impossible for a drone (self-destruct, launch missile, fire weapons, turn off engines mid-flight, eject), use "reject_impossible".
-5. If the command asks for position, status, altitude, or a report, use "report_status".
-6. If altitude is mentioned, always extract it as a number. If not mentioned, set altitude to null.
-7. Compound commands like "climb to 12 meters and hover over the rooftop" should be a single goto with the specified altitude.
-8. "Head back to", "return to", "go back to" the landing pad means goto landing pad.
-9. "Enter the motor pool" or "go into" means goto that location.
-10. DO NOT validate whether a command is safe — that is handled separately. Just parse the intent.
+4. If the command is physically impossible for a drone (self-destruct, turn off engines mid-flight, eject, kamikaze), use "reject_impossible". NOTE: "fire missile" or "fire at <target>" is a valid fire_missile action — do NOT reject it.
+5. If the command asks to fire, launch, or engage a target by callsign, use "fire_missile" with that target.
+6. If the command asks for position, status, altitude, or a report, use "report_status".
+7. If altitude is mentioned, always extract it as a number. If not mentioned, set altitude to null.
+8. Compound commands like "climb to 12 meters and hover over the rooftop" should be a single goto with the specified altitude.
+9. "Head back to", "return to", "go back to" the landing pad means goto landing pad.
+10. "Enter the motor pool" or "go into" means goto that location.
+11. DO NOT validate whether a command is safe — that is handled separately. Just parse the intent.
 
 Respond with ONLY a valid JSON object. No markdown, no explanation, no code fences."""
 
@@ -64,6 +69,12 @@ def parse_command(text: str) -> dict:
     result = _parse_with_groq(text)
     if result is None:
         result = _fallback_parse(text)
+    elif result.get("action") == "reject_impossible":
+        # Groq is trained to reject weapons commands — override with fallback
+        # if the regex can identify a valid fire_missile intent
+        fallback = _fallback_parse(text)
+        if fallback.get("action") == "fire_missile":
+            result = fallback
     result["original_text"] = text
     return result
 
@@ -109,11 +120,22 @@ def _fallback_parse(text: str) -> dict:
     t = text.lower().strip()
 
     # Impossible actions
-    impossible = ["self-destruct", "self destruct", "launch missile", "fire",
+    impossible = ["self-destruct", "self destruct",
                   "shoot", "eject", "detonate", "bomb", "destroy", "kamikaze"]
     for word in impossible:
         if word in t:
             return {"action": "reject_impossible", "reason": f"'{word}' is not a valid drone action"}
+
+    # Fire missile — must come before impossible / goto checks
+    fire_patterns = [
+        r'fire\s+(?:missile\s+at\s+|at\s+)?([a-z0-9\-]+(?:\s+[a-z0-9\-]+)?)',
+        r'launch\s+(?:missile\s+at\s+|at\s+)?([a-z0-9\-]+(?:\s+[a-z0-9\-]+)?)',
+        r'engage\s+([a-z0-9\-]+(?:\s+[a-z0-9\-]+)?)',
+    ]
+    for pat in fire_patterns:
+        m = re.search(pat, t)
+        if m:
+            return {"action": "fire_missile", "target": m.group(1).strip()}
 
     # Takeoff
     if "take off" in t or "takeoff" in t:
@@ -165,6 +187,8 @@ def _fallback_parse(text: str) -> dict:
         "motor pool", "containers", "shipping containers",
         "comms tower", "communications tower", "comm tower",
         "fuel depot",
+        "missile rack", "hellfire rack", "weapons depot", "weapons rack",
+        "cobra-6", "cobra 6", "ghost-7", "ghost 7",
     ]
     alt = _extract_number(t)
     for loc in sorted(location_keywords, key=len, reverse=True):
