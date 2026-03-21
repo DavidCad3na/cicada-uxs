@@ -24,6 +24,22 @@ from challenge.config import PYMAVLINK_CONNECTION
 app = Flask(__name__, static_folder="static")
 voice = VoiceFeedback(use_server_tts=False)
 
+
+def _execute_waypoints(drone, waypoints):
+    """
+    Execute a list of (x, y, alt) waypoints sequentially.
+    Each goto_location call blocks until the drone arrives (or the call returns),
+    so waypoints are flown in order.  Returns the result of the final leg.
+    """
+    result = None
+    for i, (wx, wy, walt) in enumerate(waypoints):
+        result = drone.goto_location(wx, wy, walt)
+        if result and not result.success:
+            # Abort on first failure and surface the failing leg
+            result.message = f"Waypoint {i+1}/{len(waypoints)} failed: {result.message}"
+            return result
+    return result
+
 # Global drone controller (initialized on connect)
 drone: DroneController | None = None
 command_log: list[dict] = []
@@ -131,6 +147,10 @@ def api_command():
         "status": "approved" if validation.approved else "rejected",
         "reason": validation.reason,
     }
+    if validation.waypoints:
+        entry["rerouted"] = True
+        entry["waypoint_count"] = len(validation.waypoints)
+        entry["path_quality"] = validation.path_quality
 
     if not validation.approved:
         feedback = voice.generate_feedback("rejected", intent, reason=validation.reason)
@@ -145,10 +165,12 @@ def api_command():
 
     if action == "takeoff":
         result = drone.takeoff(intent.get("altitude", 10))
-    elif action == "goto":
-        result = drone.goto_location(intent["x"], intent["y"], intent.get("altitude", 10))
-    elif action == "move_relative":
-        result = drone.goto_location(intent["x"], intent["y"], intent.get("altitude", 10))
+    elif action in ("goto", "move_relative"):
+        if validation.waypoints:
+            # ARA* produced a rerouted multi-waypoint path — execute sequentially
+            result = _execute_waypoints(drone, validation.waypoints)
+        else:
+            result = drone.goto_location(intent["x"], intent["y"], intent.get("altitude", 10))
     elif action == "change_altitude":
         result = drone.change_altitude(intent["altitude"])
     elif action == "land":
