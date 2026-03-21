@@ -40,6 +40,8 @@ const THEMES = {
 export default function Home() {
   const [alphaArmed, setAlphaArmed] = useState(false);
   const [bravoArmed, setBravoArmed] = useState(false);
+  const [alphaConnected, setAlphaConnected] = useState(false);
+  const [bravoConnected, setBravoConnected] = useState(false);
 
   const isArmed = alphaArmed || bravoArmed;
   const t = isArmed ? THEMES.armed : THEMES.disarmed;
@@ -92,11 +94,16 @@ export default function Home() {
               <p className={`text-xs font-bold tracking-widest uppercase ${t.droneLabel}`}>
                 &#9632; UxS-ALPHA
               </p>
-              <span className={`text-[10px] px-2 py-0.5 uppercase tracking-wider ${alphaArmed ? t.activeBadge : "bg-zinc-800 text-zinc-400"}`}>
-                {alphaArmed ? "ARMED" : "DISARMED"}
-              </span>
+              <div className="flex flex-row gap-1 items-center">
+                <span className={`text-[10px] px-2 py-0.5 uppercase tracking-wider ${alphaConnected ? "bg-green-900 text-green-400" : "bg-zinc-800 text-zinc-400"}`}>
+                  {alphaConnected ? "CONNECTED" : "DISCONNECTED"}
+                </span>
+                <span className={`text-[10px] px-2 py-0.5 uppercase tracking-wider ${alphaArmed ? t.activeBadge : "bg-zinc-800 text-zinc-400"}`}>
+                  {alphaArmed ? "ARMED" : "DISARMED"}
+                </span>
+              </div>
             </div>
-            <DroneStatus onArmedChange={setAlphaArmed} />
+            <DroneStatus onArmedChange={setAlphaArmed} onConnectedChange={setAlphaConnected} />
           </div>
 
           {/* Bravo */}
@@ -105,11 +112,16 @@ export default function Home() {
               <p className={`text-xs font-bold tracking-widest uppercase ${t.droneLabel}`}>
                 &#9632; UxS-BRAVO
               </p>
-              <span className={`text-[10px] px-2 py-0.5 uppercase tracking-wider ${bravoArmed ? t.activeBadge : "bg-zinc-800 text-zinc-400"}`}>
-                {bravoArmed ? "ARMED" : "DISARMED"}
-              </span>
+              <div className="flex flex-row gap-1 items-center">
+                <span className={`text-[10px] px-2 py-0.5 uppercase tracking-wider ${bravoConnected ? "bg-green-900 text-green-400" : "bg-zinc-800 text-zinc-400"}`}>
+                  {bravoConnected ? "CONNECTED" : "DISCONNECTED"}
+                </span>
+                <span className={`text-[10px] px-2 py-0.5 uppercase tracking-wider ${bravoArmed ? t.activeBadge : "bg-zinc-800 text-zinc-400"}`}>
+                  {bravoArmed ? "ARMED" : "DISARMED"}
+                </span>
+              </div>
             </div>
-            <DroneStatus onArmedChange={setBravoArmed} />
+            <DroneStatus onArmedChange={setBravoArmed} onConnectedChange={setBravoConnected} />
           </div>
         </aside>
       </div>
