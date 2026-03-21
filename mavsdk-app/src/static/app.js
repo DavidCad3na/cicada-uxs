@@ -398,12 +398,36 @@ async function sendCommand(text) {
         const status = data.status || 'unknown';
         addLogEntry(status, '[' + activeDroneId + '] ' + text.trim(), data.feedback || data.reason || '');
         if (data.feedback) speak(data.feedback);
+
+        if (status === 'queued') pollQueue();
     } catch (err) {
         addLogEntry('error', text.trim(), 'Error: ' + err.message);
     }
 
     isProcessing = false;
     processingEl.classList.remove('active');
+}
+
+let _queuePollId = null;
+
+function pollQueue() {
+    if (_queuePollId) clearInterval(_queuePollId);
+    _queuePollId = setInterval(async () => {
+        try {
+            const resp = await fetch('/api/queue');
+            const q = await resp.json();
+            if (q.state === 'idle' || q.state === 'cancelled') {
+                clearInterval(_queuePollId);
+                _queuePollId = null;
+                if (q.state === 'cancelled') {
+                    addLogEntry('system', 'Queue cancelled by new command.', '');
+                }
+            }
+        } catch (_) {
+            clearInterval(_queuePollId);
+            _queuePollId = null;
+        }
+    }, 2000);
 }
 
 function sendTextCommand() {

@@ -56,27 +56,55 @@ Rules:
 5. If the command asks to fire, launch, or engage a target by callsign, use "fire_missile" with that target.
 6. If the command asks for position, status, altitude, or a report, use "report_status".
 7. If altitude is mentioned, always extract it as a number. If not mentioned, set altitude to null.
-8. Compound commands like "climb to 12 meters and hover over the rooftop" should be a single goto with the specified altitude.
+8. Modifier compounds that describe a SINGLE destination with extra detail should be ONE action. Example: "climb to 12 meters and hover over the rooftop" = single goto rooftop at 12m. "Drop to 3 meters and enter the motor pool" = single goto motor pool at 3m.
+9. Sequential commands joined by "then", "and then", "after that", "next", or commas listing distinct actions should be MULTIPLE actions in a "commands" array. Example: "go to barracks, then go to command center, then land" = {"commands": [goto barracks, goto command center, land]}.
 9. "Head back to", "return to", "go back to" the landing pad means goto landing pad.
 10. "Enter the motor pool" or "go into" means goto that location.
 11. DO NOT validate whether a command is safe — that is handled separately. Just parse the intent.
 
-Respond with ONLY a valid JSON object. No markdown, no explanation, no code fences."""
+Response format:
+- Single command: return a JSON object with an "action" key, e.g. {"action": "goto", "location": "barracks 1", "altitude": null}
+- Multiple sequential commands: return {"commands": [action1, action2, ...]} where each element is an action object.
+
+Respond with ONLY valid JSON. No markdown, no explanation, no code fences."""
 
 
-def parse_command(text: str) -> dict:
-    """Parse a natural language command into a structured intent dict."""
+def parse_command(text: str) -> list[dict]:
+    """Parse a natural language command into a list of structured intent dicts.
+
+    Always returns a list (length 1 for single commands, >1 for sequences).
+    """
     result = _parse_with_groq(text)
+    if result is not None:
+        intents = _normalize_to_list(result)
+        # Groq sometimes ignores the multi-command format and returns a
+        # single action for sequential input.  When the text clearly
+        # contains sequential keywords but Groq collapsed it into one
+        # action, discard its result and let the fallback splitter handle it.
+        if len(intents) <= 1 and _has_sequential_keywords(text):
+            result = None
+
     if result is None:
         result = _fallback_parse(text)
-    elif result.get("action") == "reject_impossible":
-        # Groq is trained to reject weapons commands — override with fallback
-        # if the regex can identify a valid fire_missile intent
+    elif isinstance(result, dict) and result.get("action") == "reject_impossible":
         fallback = _fallback_parse(text)
-        if fallback.get("action") == "fire_missile":
+        fb_list = _normalize_to_list(fallback)
+        if fb_list and fb_list[0].get("action") == "fire_missile":
             result = fallback
-    result["original_text"] = text
-    return result
+
+    intents = _normalize_to_list(result)
+    for intent in intents:
+        intent["original_text"] = text
+    return intents
+
+
+def _normalize_to_list(parsed: dict | list) -> list[dict]:
+    """Convert any parser output into a flat list of intent dicts."""
+    if isinstance(parsed, list):
+        return parsed if parsed else [{"action": "hover"}]
+    if "commands" in parsed and isinstance(parsed["commands"], list):
+        return parsed["commands"] if parsed["commands"] else [{"action": "hover"}]
+    return [parsed]
 
 
 def _parse_with_groq(text: str) -> dict | None:
@@ -93,7 +121,7 @@ def _parse_with_groq(text: str) -> dict | None:
                 {"role": "user", "content": text},
             ],
             temperature=0.1,
-            max_tokens=200,
+            max_tokens=600,
             response_format={"type": "json_object"},
         )
         content = response.choices[0].message.content
@@ -115,8 +143,27 @@ def _extract_number(text: str) -> float | None:
     return None
 
 
-def _fallback_parse(text: str) -> dict:
-    """Simple regex-based parser for when Groq is unavailable."""
+_SEQ_SPLIT = re.compile(
+    r',?\s*(?:and\s+then|then|after\s+that|next)\s+',
+    re.IGNORECASE,
+)
+
+
+def _has_sequential_keywords(text: str) -> bool:
+    return bool(_SEQ_SPLIT.search(text))
+
+
+def _fallback_parse(text: str) -> dict | list[dict]:
+    """Regex-based parser. Splits on sequential keywords first."""
+    segments = _SEQ_SPLIT.split(text)
+    segments = [s.strip() for s in segments if s.strip()]
+    if len(segments) > 1:
+        return [_fallback_parse_single(s) for s in segments]
+    return _fallback_parse_single(text)
+
+
+def _fallback_parse_single(text: str) -> dict:
+    """Parse a single (non-compound) command segment."""
     t = text.lower().strip()
 
     # Impossible actions
@@ -183,8 +230,8 @@ def _fallback_parse(text: str) -> dict:
         "southwest tower", "southwest watch tower", "sw tower",
         "command building", "command center",
         "rooftop", "roof",
-        "barracks 1", "barracks 2", "north barracks", "south barracks",
-        "motor pool", "containers", "shipping containers",
+        "barracks 1", "barracks 2", "north barracks", "south barracks", "barracks",
+        "motor pool", "container", "containers", "shipping containers",
         "comms tower", "communications tower", "comm tower",
         "fuel depot",
         "missile rack", "hellfire rack", "weapons depot", "weapons rack",
@@ -195,9 +242,15 @@ def _fallback_parse(text: str) -> dict:
         if loc in t:
             return {"action": "goto", "location": loc, "altitude": alt}
 
-    # Generic goto with altitude
-    if any(w in t for w in ["fly to", "go to", "head to", "return to", "head back", "go back"]):
-        return {"action": "goto", "location": t, "altitude": alt}
+    # Generic goto with altitude — strip verb prefixes so the location
+    # resolver sees a clean name (e.g. "barracks" not "go to barracks")
+    _goto_prefixes = ["fly to", "go to", "head to", "return to",
+                      "head back to", "go back to", "head back", "go back"]
+    for pfx in _goto_prefixes:
+        if t.startswith(pfx):
+            loc = t[len(pfx):].strip().rstrip(",")
+            if loc:
+                return {"action": "goto", "location": loc, "altitude": alt}
 
     # Default: try to interpret as goto
     return {"action": "goto", "location": t, "altitude": alt}
