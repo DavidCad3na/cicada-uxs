@@ -6,14 +6,21 @@ Checks no-go zones, flight path, IFF, impossible actions, and state feasibility.
 
 import json
 import os
-from dataclasses import dataclass
-from typing import Optional, Tuple
+from dataclasses import dataclass, field
+from typing import List, Optional, Tuple
 
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 from challenge.config import (
     NO_GO_ZONES, WAYPOINTS, WAYPOINTS_BY_NAME, distance_2d,
 )
+from pathfinder import (
+    ThreatZone, zones_from_config, plan_path,
+    path_clear_2d, segment_intersects_circle,
+)
+
+# Build threat model once from config
+_THREATS: List[ThreatZone] = zones_from_config(NO_GO_ZONES)
 
 
 @dataclass
@@ -21,6 +28,10 @@ class ValidationResult:
     approved: bool
     reason: str
     suggestion: str
+    # Populated when ARA* reroutes around a blocked direct path.
+    # Each tuple is (x, y, alt) in ENU metres.
+    waypoints: List[Tuple[float, float, float]] = field(default_factory=list)
+    path_quality: str = ""   # e.g. "≤2.0× optimal (time-bounded)"
 
 
 # ── Location Resolution ─────────────────────────────────────────────────
@@ -181,46 +192,63 @@ def validate(intent: dict, current_pos: dict) -> ValidationResult:
         if current_pos.get("alt", 0) < 0.5 and action != "change_altitude":
             return ValidationResult(False, "Drone is on the ground", "Take off first.")
 
-    # 9. No-go zone check (target position)
+    # 9. No-go zone check — destination point (analytic, exact)
     target_x = intent.get("x")
     target_y = intent.get("y")
     if target_x is not None and target_y is not None:
         target_alt = intent.get("altitude") or current_pos.get("alt", 10)
 
+        # Destination check uses the altitude the drone WILL BE at when it arrives
         for zone in NO_GO_ZONES:
             dist = distance_2d(target_x, target_y, zone.x, zone.y)
             if dist < zone.radius and target_alt < zone.alt_ceil:
                 if zone.alt_ceil == float("inf"):
                     return ValidationResult(
                         False,
-                        f"No-go zone: {zone.name} — no entry at any altitude",
-                        f"The {zone.name} is a restricted area. Fly around it."
+                        f"No-go zone: {zone.name} — destination is inside a permanently restricted area",
+                        f"Choose a destination outside the {zone.name} perimeter."
                     )
                 else:
                     return ValidationResult(
                         False,
-                        f"No-go zone: {zone.name} — unsafe below {zone.alt_ceil}m AGL",
-                        f"Increase altitude above {zone.alt_ceil}m to safely pass."
+                        f"No-go zone: {zone.name} — destination is inside restricted airspace below {zone.alt_ceil}m AGL",
+                        f"Increase altitude above {zone.alt_ceil}m or choose a different destination."
                     )
 
-    # 10. Path check — sample 20 points along the flight path
+    # 10. Path check — analytic line-circle intersection + ARA* rerouting
     if target_x is not None and target_y is not None:
         cur_x = current_pos.get("x", -40)
         cur_y = current_pos.get("y", 0)
-        target_alt = intent.get("altitude") or current_pos.get("alt", 10)
+        cur_alt = current_pos.get("alt", 10)
+        target_alt = intent.get("altitude") or cur_alt
+        # Conservative: check path at lowest altitude during transit
+        flight_alt = min(cur_alt, target_alt)
 
-        for i in range(21):
-            t = i / 20.0
-            px = cur_x + t * (target_x - cur_x)
-            py = cur_y + t * (target_y - cur_y)
-            for zone in NO_GO_ZONES:
-                dist = distance_2d(px, py, zone.x, zone.y)
-                if dist < zone.radius and target_alt < zone.alt_ceil:
-                    return ValidationResult(
-                        False,
-                        f"Flight path passes through {zone.name} no-go zone",
-                        f"Plan a route that avoids {zone.name}."
-                    )
+        direct_clear = path_clear_2d(cur_x, cur_y, target_x, target_y, flight_alt, _THREATS)
+
+        if not direct_clear:
+            # Direct path is blocked — invoke ARA* to find a safe route
+            result = plan_path(
+                cur_x, cur_y, current_pos.get("alt", 10),
+                target_x, target_y, target_alt,
+                _THREATS,
+            )
+
+            if not result.found:
+                return ValidationResult(
+                    False,
+                    "Flight path passes through a no-go zone and no safe alternative route exists",
+                    "No navigable path to that destination under current threat conditions."
+                )
+
+            # Approved with rerouted waypoints
+            return ValidationResult(
+                True,
+                f"Direct path blocked — ARA* reroute computed ({result.quality})",
+                f"Flying via {len(result.waypoints)} waypoints at {result.safe_alt:.0f}m AGL to avoid restricted zones.",
+                waypoints=result.waypoints,
+                path_quality=result.quality,
+            )
 
     # 11. IFF check for engagement commands
     if action == "identify":
