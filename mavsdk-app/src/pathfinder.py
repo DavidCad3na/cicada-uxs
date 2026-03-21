@@ -30,12 +30,13 @@ ROWS = int((Y_MAX - Y_MIN) / GRID_RES)   # 55
 
 # ── Planner Parameters ───────────────────────────────────────────────────────
 
-RISK_WEIGHT  = 40.0   # penalty weight for Gaussian threat exposure per cell
-EPS_INIT     = 3.0    # initial suboptimality bound (fast, ≤3× optimal)
-EPS_FINAL    = 1.0    # terminal bound (optimal)
-EPS_STEP     = 0.5    # decrement per ARA* iteration
-TIME_BUDGET  = 0.20   # seconds total planning time budget
-ALT_MARGIN   = 5.0    # metres added above a zone's alt_ceil when going over
+RISK_WEIGHT    = 40.0   # penalty weight for Gaussian threat exposure per cell
+EPS_INIT       = 3.0    # initial suboptimality bound (fast, ≤3× optimal)
+EPS_FINAL      = 1.0    # terminal bound (optimal)
+EPS_STEP       = 0.5    # decrement per ARA* iteration
+TIME_BUDGET    = 0.20   # seconds total planning time budget
+ALT_MARGIN     = 5.0    # metres added above a zone's alt_ceil when going over
+SAFETY_MARGIN  = 3.0    # metres added to zone radius for flight dynamics buffer
 
 
 # ── Threat Model ─────────────────────────────────────────────────────────────
@@ -101,8 +102,8 @@ def _threat_cost(wx: float, wy: float, alt: float, threats: List[ThreatZone]) ->
     cost = 0.0
     for t in threats:
         d = math.hypot(wx - t.x, wy - t.y)
-        # Hard block
-        if d < t.radius and alt < t.alt_ceil:
+        # Hard block — includes safety margin for flight dynamics buffer
+        if d < t.radius + SAFETY_MARGIN and alt < t.alt_ceil:
             return float("inf")
         # Soft Gaussian envelope — effective range ≈ 3× radius
         sigma = t.radius * 1.5
@@ -301,17 +302,17 @@ def path_clear(
 ) -> bool:
     """
     Return True if the straight line from p1 to p2 does not intersect any
-    threat zone that is active at the altitude of travel.
-    Altitude is taken as max(p1.alt, p2.alt) — conservative.
+    threat zone (including safety margin) at the altitude of travel.
+    Altitude is taken as min(p1.alt, p2.alt) — conservative for climbing/descending.
     """
     x1, y1, alt1 = p1
     x2, y2, alt2 = p2
-    alt = max(alt1, alt2)
+    alt = min(alt1, alt2)
 
     for t in threats:
         if alt >= t.alt_ceil:
             continue  # altitude clears this threat
-        if segment_intersects_circle(x1, y1, x2, y2, t.x, t.y, t.radius):
+        if segment_intersects_circle(x1, y1, x2, y2, t.x, t.y, t.radius + SAFETY_MARGIN):
             return False
     return True
 
@@ -322,11 +323,11 @@ def path_clear_2d(
     alt: float,
     threats: List[ThreatZone],
 ) -> bool:
-    """2D variant (no altitude tuple) for convenience."""
+    """2D variant (no altitude tuple) for convenience. Includes safety margin."""
     for t in threats:
         if alt >= t.alt_ceil:
             continue
-        if segment_intersects_circle(x1, y1, x2, y2, t.x, t.y, t.radius):
+        if segment_intersects_circle(x1, y1, x2, y2, t.x, t.y, t.radius + SAFETY_MARGIN):
             return False
     return True
 

@@ -66,8 +66,8 @@ LOCATIONS = {
     "southwest tower":          LocationInfo("SW Tower", -57, -37, 12),
     "southwest watch tower":    LocationInfo("SW Tower", -57, -37, 12),
     "sw tower":                 LocationInfo("SW Tower", -57, -37, 12),
-    "command building":         LocationInfo("Command Building", 20, 10, 12),
-    "command center":           LocationInfo("Command Building", 20, 10, 12),
+    "command building":         LocationInfo("Command Building", 25, 14, 12),
+    "command center":           LocationInfo("Command Building", 25, 14, 12),
     "rooftop":                  LocationInfo("Rooftop", 25, 14, 12),
     "roof":                     LocationInfo("Rooftop", 25, 14, 12),
     "barracks 1":               LocationInfo("Barracks 1", -20, 25, 8),
@@ -79,10 +79,9 @@ LOCATIONS = {
     "motor pool":               LocationInfo("Motor Pool", 38, -20, 3),
     "containers":               LocationInfo("Containers", 1.5, -16.5, 8),
     "shipping containers":      LocationInfo("Containers", 1.5, -16.5, 8),
-    "comms tower":              LocationInfo("Comms Tower", 40, 30, 30),
-    "communications tower":     LocationInfo("Comms Tower", 40, 30, 30),
-    "comm tower":               LocationInfo("Comms Tower", 40, 30, 30),
-    "fuel depot":               LocationInfo("Fuel Depot", -27, -32, 10),
+    "comms tower":              LocationInfo("Comms Tower", 40, 20, 30),
+    "communications tower":     LocationInfo("Comms Tower", 40, 20, 30),
+    "comm tower":               LocationInfo("Comms Tower", 40, 20, 30),
 }
 
 
@@ -197,10 +196,13 @@ def validate(intent: dict, current_pos: dict) -> ValidationResult:
     target_y = intent.get("y")
     if target_x is not None and target_y is not None:
         target_alt = intent.get("altitude") or current_pos.get("alt", 10)
+        # Conservative: use the lowest altitude the drone will fly at during transit.
+        # The drone doesn't teleport to target_alt — it climbs/descends en route.
+        flight_alt = min(target_alt, current_pos.get("alt", 10))
 
         for zone in NO_GO_ZONES:
             dist = distance_2d(target_x, target_y, zone.x, zone.y)
-            if dist < zone.radius and target_alt < zone.alt_ceil:
+            if dist < zone.radius and flight_alt < zone.alt_ceil:
                 if zone.alt_ceil == float("inf"):
                     return ValidationResult(
                         False,
@@ -218,9 +220,12 @@ def validate(intent: dict, current_pos: dict) -> ValidationResult:
     if target_x is not None and target_y is not None:
         cur_x = current_pos.get("x", -40)
         cur_y = current_pos.get("y", 0)
-        target_alt = intent.get("altitude") or current_pos.get("alt", 10)
+        cur_alt = current_pos.get("alt", 10)
+        target_alt = intent.get("altitude") or cur_alt
+        # Conservative: check the path at the lowest altitude during transit
+        flight_alt = min(cur_alt, target_alt)
 
-        direct_clear = path_clear_2d(cur_x, cur_y, target_x, target_y, target_alt, _THREATS)
+        direct_clear = path_clear_2d(cur_x, cur_y, target_x, target_y, flight_alt, _THREATS)
 
         if not direct_clear:
             # Direct path is blocked — invoke ARA* to find a safe route
